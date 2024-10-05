@@ -53,3 +53,4 @@ gleeunit = { version = ">= 1.0.0 and < 2.0.0" }
 lustre = { version = ">= 4.5.0 and < 5.0.0" }
 lustre_dev_tools = { version = ">= 1.5.7 and < 2.0.0" }
 lustre_http = { version = ">= 0.5.2 and < 1.0.0" }
+simplifile = { version = ">= 2.2.0 and < 3.0.0" }

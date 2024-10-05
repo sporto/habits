@@ -82,6 +82,39 @@ fn login(model: Model) -> effect.Effect(Msg) {
   lustre_http.post(model.flags.api_url <> "/auth/v1/login", payload, expect)
 }
 
+/// Decoders
+pub type LoginResponse {
+  LoginResponse(
+    access_token: String,
+    refresh_token: String,
+    expires_at: Int,
+    user: LoginUser,
+  )
+}
+
+pub type LoginUser {
+  LoginUser(id: String, email: String)
+}
+
+pub fn login_response_decoder() {
+  dynamic.decode4(
+    LoginResponse,
+    dynamic.field("access_token", dynamic.string),
+    dynamic.field("refresh_token", dynamic.string),
+    dynamic.field("expires_at", dynamic.int),
+    dynamic.field("user", login_user_decoder()),
+  )
+}
+
+pub fn login_user_decoder() {
+  dynamic.decode2(
+    LoginUser,
+    dynamic.field("id", dynamic.string),
+    dynamic.field("email", dynamic.string),
+  )
+}
+
+/// Views
 pub fn view(model: Model) -> element.Element(Msg) {
   html.div([], [view_login(model)])
 }

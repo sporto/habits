@@ -1,0 +1,43 @@
+{
+  "access_token": "abc123",
+  "token_type": "bearer",
+  "expires_in": 3600,
+  "expires_at": 1728174600,
+  "refresh_token": "abc",
+  "user": {
+    "id": "user-id-123",
+    "aud": "authenticated",
+    "role": "authenticated",
+    "email": "sam@example.com",
+    "email_confirmed_at": "2024-10-04T14:05:15.593576Z",
+    "phone": "",
+    "confirmed_at": "2024-10-04T14:05:15.593576Z",
+    "last_sign_in_at": "2024-10-05T23:30:00.614317845Z",
+    "app_metadata": {
+      "provider": "email",
+      "providers": ["email"]
+    },
+    "user_metadata": {},
+    "identities": [
+      {
+        "identity_id": "identity-id-123",
+        "id": "id-123",
+        "user_id": "user-id-123",
+        "identity_data": {
+          "email": "sam@example.com",
+          "email_verified": false,
+          "phone_verified": false,
+          "sub": "sub-123"
+        },
+        "provider": "email",
+        "last_sign_in_at": "2024-10-04T14:05:15.586459Z",
+        "created_at": "2024-10-04T14:05:15.586527Z",
+        "updated_at": "2024-10-04T14:05:15.586527Z",
+        "email": "sam@example.com"
+      }
+    ],
+    "created_at": "2024-10-04T14:05:15.580673Z",
+    "updated_at": "2024-10-05T23:30:00.625868Z",
+    "is_anonymous": false
+  }
+}
