@@ -15,23 +15,22 @@ pub type Flags {
 }
 
 pub type Model {
-  Model(
-    cats: List(String),
-    count: Int,
-    email: String,
-    flags: Flags,
-    password: String,
-  )
+  Model(login_form: LoginForm, flags: Flags)
 }
 
 fn new_model() -> Model {
   Model(
-    cats: [],
-    count: 0,
-    email: "",
     flags: Flags(api_url: "https://123.supabase.co"),
-    password: "",
+    login_form: new_login_form(),
   )
+}
+
+pub type LoginForm {
+  LoginForm(email: String, password: String)
+}
+
+pub fn new_login_form() -> LoginForm {
+  LoginForm(email: "", password: "")
 }
 
 fn init(_flags) -> #(Model, effect.Effect(Msg)) {
@@ -39,9 +38,6 @@ fn init(_flags) -> #(Model, effect.Effect(Msg)) {
 }
 
 pub type Msg {
-  UserIncrementedCount
-  UserDecrementedCount
-  ApiReturnedCat(Result(String, lustre_http.HttpError))
   ApiReturnedLoginResponse(Result(String, lustre_http.HttpError))
   ClickedLogin
   ChangedEmail(String)
@@ -57,19 +53,16 @@ pub fn main() {
 
 pub fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
   case msg {
-    UserIncrementedCount -> #(Model(..model, count: model.count + 1), get_cat())
-    UserDecrementedCount -> #(
-      Model(..model, count: model.count - 1),
+    ApiReturnedLoginResponse(_) -> #(model, effect.none())
+    ChangedEmail(email) -> #(
+      Model(..model, login_form: LoginForm(..model.login_form, email: email)),
       effect.none(),
     )
-    ApiReturnedCat(Ok(cat)) -> #(
-      Model(..model, cats: [cat, ..model.cats]),
-      effect.none(),
-    )
-    ApiReturnedCat(Error(_)) -> #(model, effect.none())
-    ChangedEmail(email) -> #(Model(..model, email: email), effect.none())
     ChangedPassword(password) -> #(
-      Model(..model, password: password),
+      Model(
+        ..model,
+        login_form: LoginForm(..model.login_form, password: password),
+      ),
       effect.none(),
     )
     ClickedLogin -> #(model, effect.none())
@@ -82,46 +75,26 @@ fn login(model: Model) -> effect.Effect(Msg) {
 
   let payload =
     json.object([
-      #("email", json.string(model.email)),
-      #("password", json.string(model.password)),
+      #("email", json.string(model.login_form.email)),
+      #("password", json.string(model.login_form.password)),
     ])
 
   lustre_http.post(model.flags.api_url <> "/auth/v1/login", payload, expect)
 }
 
-fn get_cat() -> effect.Effect(Msg) {
-  let decoder = dynamic.field("_id", dynamic.string)
-  let expect = lustre_http.expect_json(decoder, ApiReturnedCat)
-
-  lustre_http.get("https://cataas.com/cat?json=true", expect)
-}
-
 pub fn view(model: Model) -> element.Element(Msg) {
-  let count = int.to_string(model.count)
-
-  html.div([], [
-    view_login(model),
-    html.button([event.on_click(UserIncrementedCount)], [element.text("+")]),
-    element.text(count),
-    html.button([event.on_click(UserDecrementedCount)], [element.text("-")]),
-    html.div(
-      [],
-      list.map(model.cats, fn(cat) {
-        html.img([attr.src("https://cataas.com/cat/" <> cat)])
-      }),
-    ),
-  ])
+  html.div([], [view_login(model)])
 }
 
 fn view_login(model: Model) {
   html.form([event.on_submit(ClickedLogin)], [
     div([], [
       html.label([], [text("Email")]),
-      html.input([attr.type_("text"), attr.value(model.email)]),
+      html.input([attr.type_("text"), attr.value(model.login_form.email)]),
     ]),
     div([], [
       html.label([], [text("Passsword")]),
-      html.input([attr.type_("password"), attr.value(model.password)]),
+      html.input([attr.type_("password"), attr.value(model.login_form.password)]),
     ]),
     div([], [html.input([attr.type_("submit"), attr.value("Login")])]),
   ])
