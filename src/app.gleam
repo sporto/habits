@@ -1,10 +1,11 @@
 import gleam/dynamic
-import gleam/http.{type Method, Https, Post}
+import gleam/http.{type Method, Get, Https, Post}
 import gleam/http/request.{type Request}
 import gleam/int
 import gleam/io
 import gleam/json
 import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/result.{try}
 import lustre
 import lustre/attribute as attr
@@ -56,6 +57,7 @@ fn init(flags: Flags) -> #(Model, effect.Effect(Msg)) {
 
 pub type Msg {
   ApiReturnedSessionData(Result(SessionData, HttpError))
+  ApiReturnedHabits(Result(Nil, HttpError))
   ClickedLogin
   ChangedEmail(String)
   ChangedPassword(String)
@@ -76,6 +78,7 @@ pub fn main(flags: dynamic.Dynamic) {
 pub fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
   case msg {
     ApiReturnedSessionData(result) -> on_api_returned_auth_data(model, result)
+    ApiReturnedHabits(_) -> #(model, effect.none())
     ChangedEmail(email) -> #(
       Model(..model, login_form: LoginForm(..model.login_form, email: email)),
       effect.none(),
@@ -93,7 +96,7 @@ pub fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
     }
     GotSessionData(data) -> #(
       Model(..model, auth: Authenticated(data)),
-      effect.none(),
+      get_today_habits(model),
     )
   }
 }
@@ -133,7 +136,7 @@ fn login(model: Model) -> effect.Effect(Msg) {
     method: Post,
     path: "/auth/v1/token",
     query: [#("grant_type", "password")],
-    payload:,
+    payload: Some(payload),
   )
   |> lustre_http.send(expect)
 }
@@ -190,6 +193,19 @@ fn store_session_do(data: SessionData) -> Result(Nil, String) {
 
   storage.set_item(local_storage, "session", json_string)
   |> result.replace_error("Unable to store session data in local storage")
+}
+
+fn get_today_habits(model: Model) -> effect.Effect(Msg) {
+  let expect = lustre_http.expect_anything(ApiReturnedHabits)
+
+  api_crud_request(
+    flags: model.flags,
+    method: Get,
+    path: "/habits",
+    payload: None,
+    query: [],
+  )
+  |> lustre_http.send(expect)
 }
 
 /// Decoders
@@ -315,21 +331,45 @@ fn build_api_request(
   method method: Method,
   path path: String,
   query query: List(#(String, String)),
-  payload payload: json.Json,
+  payload payload: Option(json.Json),
 ) -> Request(String) {
-  let body = payload |> json.to_string
-
   request.new()
   |> request.set_method(method)
   |> request.set_scheme(Https)
   |> request.set_host(flags.api_host)
   |> request.set_path(path)
   |> request.set_query(query)
-  |> request.set_body(body)
+  |> maybe_add_payload(payload)
   |> request.set_header("apikey", flags.api_public_key)
   |> request.set_header("Authorization", "Bearer " <> flags.api_public_key)
   |> request.set_header("Content-Type", "application/json")
 }
-// fn api_login_url(flags: Flags) {
-//   flags.api_host <> "/auth/v1/token?grant_type=password"
-// }
+
+fn maybe_add_payload(
+  req: Request(String),
+  payload: Option(json.Json),
+) -> Request(String) {
+  case payload {
+    Some(json) -> {
+      let body = json.to_string(json)
+      request.set_body(req, body)
+    }
+    None -> req
+  }
+}
+
+fn api_crud_request(
+  flags flags: Flags,
+  method method: Method,
+  path path: String,
+  payload payload: Option(json.Json),
+  query query: List(#(String, String)),
+) -> Request(String) {
+  build_api_request(
+    flags: flags,
+    method:,
+    path: "/rest/v1/" <> path,
+    payload:,
+    query:,
+  )
+}
