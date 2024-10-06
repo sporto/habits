@@ -1,4 +1,6 @@
 import gleam/dynamic
+import gleam/http.{type Method, Https, Post}
+import gleam/http/request.{type Request}
 import gleam/int
 import gleam/io
 import gleam/json
@@ -13,7 +15,7 @@ import lustre_http.{type HttpError}
 import plinth/javascript/storage
 
 pub type Flags {
-  Flags(api_url: String, api_public_key: String)
+  Flags(api_host: String, api_public_key: String)
 }
 
 pub type Model {
@@ -116,11 +118,18 @@ fn login(model: Model) -> effect.Effect(Msg) {
       #("password", json.string(model.login_form.password)),
     ])
 
-  let url = api_login_url(model.flags)
+  // let url = api_login_url(model.flags)
 
-  io.debug(url)
+  io.debug(payload)
 
-  lustre_http.post(url, payload, expect)
+  build_api_request(
+    flags: model.flags,
+    method: Post,
+    path: "/auth/v1/token",
+    query: [#("grant_type", "password")],
+    payload:,
+  )
+  |> lustre_http.send(expect)
 }
 
 fn store_session(data: SessionData) -> effect.Effect(Msg) {
@@ -143,7 +152,7 @@ fn store_session(data: SessionData) -> effect.Effect(Msg) {
 pub fn flags_decoder() {
   dynamic.decode2(
     Flags,
-    dynamic.field("apiUrl", dynamic.string),
+    dynamic.field("apiHost", dynamic.string),
     dynamic.field("apiPublicKey", dynamic.string),
   )
 }
@@ -208,6 +217,7 @@ fn view_login(model: Model) {
         attr.type_("text"),
         attr.name("email"),
         attr.value(model.login_form.email),
+        event.on_input(ChangedEmail),
       ]),
     ]),
     div([], [
@@ -216,6 +226,7 @@ fn view_login(model: Model) {
         attr.type_("password"),
         attr.name("password"),
         attr.value(model.login_form.password),
+        event.on_input(ChangedPassword),
       ]),
     ]),
     div([], [html.input([attr.type_("submit"), attr.value("Login")])]),
@@ -244,6 +255,26 @@ fn json_error_to_string(error: json.DecodeError) -> String {
   }
 }
 
-fn api_login_url(flags: Flags) {
-  flags.api_url <> "/auth/v1/token?grant_type=password"
+fn build_api_request(
+  flags flags: Flags,
+  method method: Method,
+  path path: String,
+  query query: List(#(String, String)),
+  payload payload: json.Json,
+) -> Request(String) {
+  let body = payload |> json.to_string
+
+  request.new()
+  |> request.set_method(method)
+  |> request.set_scheme(Https)
+  |> request.set_host(flags.api_host)
+  |> request.set_path(path)
+  |> request.set_query(query)
+  |> request.set_body(body)
+  |> request.set_header("apikey", flags.api_public_key)
+  |> request.set_header("Authorization", "Bearer " <> flags.api_public_key)
+  |> request.set_header("Content-Type", "application/json")
 }
+// fn api_login_url(flags: Flags) {
+//   flags.api_host <> "/auth/v1/token?grant_type=password"
+// }
