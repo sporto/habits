@@ -1,5 +1,6 @@
 import gleam/dynamic
 import gleam/int
+import gleam/io
 import gleam/json
 import gleam/list
 import lustre
@@ -30,7 +31,7 @@ fn new_model() -> Model {
 
 pub type Auth {
   Unauthenticated
-  Authenticated(data: AuthData)
+  Authenticated(data: SessionData)
 }
 
 pub type LoginForm {
@@ -50,7 +51,7 @@ fn init(_flags) -> #(Model, effect.Effect(Msg)) {
 }
 
 pub type Msg {
-  ApiReturnedAuthData(Result(AuthData, HttpError))
+  ApiReturnedSessionData(Result(SessionData, HttpError))
   ClickedLogin
   ChangedEmail(String)
   ChangedPassword(String)
@@ -68,7 +69,7 @@ pub fn main() {
 
 pub fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
   case msg {
-    ApiReturnedAuthData(result) -> on_api_returned_auth_data(model, result)
+    ApiReturnedSessionData(result) -> on_api_returned_auth_data(model, result)
     ChangedEmail(email) -> #(
       Model(..model, login_form: LoginForm(..model.login_form, email: email)),
       effect.none(),
@@ -86,11 +87,14 @@ pub fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
 
 fn on_api_returned_auth_data(
   model: Model,
-  result: Result(AuthData, HttpError),
+  result: Result(SessionData, HttpError),
 ) -> Returns {
   case result {
     // TODO Store data in LocalStorage
-    Ok(data) -> #(Model(..model, auth: Authenticated(data)), effect.none())
+    Ok(data) -> #(
+      Model(..model, auth: Authenticated(data)),
+      store_session(data),
+    )
     Error(error) -> #(
       Model(..model, notices: [Notice(http_error_to_string(error))]),
       effect.none(),
@@ -99,7 +103,8 @@ fn on_api_returned_auth_data(
 }
 
 fn login(model: Model) -> effect.Effect(Msg) {
-  let expect = lustre_http.expect_json(auth_data_decoder(), ApiReturnedAuthData)
+  let expect =
+    lustre_http.expect_json(session_data_decoder(), ApiReturnedSessionData)
 
   let payload =
     json.object([
@@ -110,9 +115,25 @@ fn login(model: Model) -> effect.Effect(Msg) {
   lustre_http.post(model.flags.api_url <> "/auth/v1/login", payload, expect)
 }
 
+fn store_session(data: SessionData) -> effect.Effect(Msg) {
+  let local_storage_result = storage.local()
+
+  case local_storage_result {
+    Ok(local_storage) -> {
+      let json_string = session_encode(data) |> json.to_string
+      storage.set_item(local_storage, "session", json_string)
+      effect.none()
+    }
+    Error(_) -> {
+      io.debug("Failed to open local storage")
+      effect.none()
+    }
+  }
+}
+
 /// Decoders
-pub type AuthData {
-  AuthData(
+pub type SessionData {
+  SessionData(
     access_token: String,
     refresh_token: String,
     expires_at: Int,
@@ -124,22 +145,38 @@ pub type User {
   User(id: String, email: String)
 }
 
-pub fn auth_data_decoder() {
+pub fn session_data_decoder() {
   dynamic.decode4(
-    AuthData,
+    SessionData,
     dynamic.field("access_token", dynamic.string),
     dynamic.field("refresh_token", dynamic.string),
     dynamic.field("expires_at", dynamic.int),
-    dynamic.field("user", login_user_decoder()),
+    dynamic.field("user", session_user_decoder()),
   )
 }
 
-pub fn login_user_decoder() {
+pub fn session_encode(data: SessionData) {
+  json.object([
+    #("access_token", json.string(data.access_token)),
+    #("refresh_token", json.string(data.refresh_token)),
+    #("expires_at", json.int(data.expires_at)),
+    #("user", session_user_encode(data.user)),
+  ])
+}
+
+pub fn session_user_decoder() {
   dynamic.decode2(
     User,
     dynamic.field("id", dynamic.string),
     dynamic.field("email", dynamic.string),
   )
+}
+
+pub fn session_user_encode(user: User) {
+  json.object([
+    #("id", json.string(user.id)),
+    #("email", json.string(user.email)),
+  ])
 }
 
 /// Views
