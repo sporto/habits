@@ -1,8 +1,8 @@
+import app
 import gleam/io
 import gleam/json
 import gleeunit
 import gleeunit/should
-import habits
 import simplifile
 
 pub fn main() {
@@ -23,8 +23,7 @@ pub fn hello_world_test() {
 
 pub fn parse_auth_data_test() {
   let json_string = get_json_fixture("login-response.json")
-  let data =
-    json.decode(from: json_string, using: habits.session_data_decoder())
+  let data = json.decode(from: json_string, using: app.session_data_decoder())
 
   data |> should.be_ok()
 }

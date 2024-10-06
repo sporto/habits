@@ -1,2 +1,2 @@
-export API_URL=https://113.supabase.co
-export API_PUBLIC_KEY=abc
+export VITE_API_URL=https://113.supabase.co
+export VITE_API_PUBLIC_KEY=abc

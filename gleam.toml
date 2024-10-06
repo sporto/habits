@@ -1,4 +1,4 @@
-name = "habits"
+name = "app"
 version = "1.0.0"
 target = "javascript"
 
@@ -22,5 +22,4 @@ plinth = ">= 0.4.14 and < 1.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"
-lustre_dev_tools = ">= 1.5.7 and < 2.0.0"
 simplifile = ">= 2.2.0 and < 3.0.0"

@@ -13,17 +13,17 @@ import lustre_http.{type HttpError}
 import plinth/javascript/storage
 
 pub type Flags {
-  Flags(api_url: String)
+  Flags(api_url: String, api_public_key: String)
 }
 
 pub type Model {
   Model(auth: Auth, login_form: LoginForm, flags: Flags, notices: List(Notice))
 }
 
-fn new_model() -> Model {
+fn new_model(flags: Flags) -> Model {
   Model(
     auth: Unauthenticated,
-    flags: Flags(api_url: "https://123.supabase.co"),
+    flags:,
     login_form: new_login_form(),
     notices: [],
   )
@@ -46,8 +46,9 @@ pub type Notice {
   Notice(message: String)
 }
 
-fn init(_flags) -> #(Model, effect.Effect(Msg)) {
-  #(new_model(), effect.none())
+fn init(flags: Flags) -> #(Model, effect.Effect(Msg)) {
+  // io.debug(flags)
+  #(new_model(flags), effect.none())
 }
 
 pub type Msg {
@@ -60,9 +61,10 @@ pub type Msg {
 type Returns =
   #(Model, effect.Effect(Msg))
 
-pub fn main() {
+pub fn main(flags: dynamic.Dynamic) {
   let app = lustre.application(init, update, view)
-  let assert Ok(_) = lustre.start(app, "#app", Nil)
+  let assert Ok(flags) = flags_decoder()(flags)
+  let assert Ok(_) = lustre.start(app, "#app", flags)
 
   Nil
 }
@@ -81,7 +83,10 @@ pub fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
       ),
       effect.none(),
     )
-    ClickedLogin -> #(model, effect.none())
+    ClickedLogin -> {
+      io.debug("Clicked login")
+      #(model, login(model))
+    }
   }
 }
 
@@ -90,7 +95,6 @@ fn on_api_returned_auth_data(
   result: Result(SessionData, HttpError),
 ) -> Returns {
   case result {
-    // TODO Store data in LocalStorage
     Ok(data) -> #(
       Model(..model, auth: Authenticated(data)),
       store_session(data),
@@ -112,7 +116,11 @@ fn login(model: Model) -> effect.Effect(Msg) {
       #("password", json.string(model.login_form.password)),
     ])
 
-  lustre_http.post(model.flags.api_url <> "/auth/v1/login", payload, expect)
+  let url = api_login_url(model.flags)
+
+  io.debug(url)
+
+  lustre_http.post(url, payload, expect)
 }
 
 fn store_session(data: SessionData) -> effect.Effect(Msg) {
@@ -132,6 +140,14 @@ fn store_session(data: SessionData) -> effect.Effect(Msg) {
 }
 
 /// Decoders
+pub fn flags_decoder() {
+  dynamic.decode2(
+    Flags,
+    dynamic.field("apiUrl", dynamic.string),
+    dynamic.field("apiPublicKey", dynamic.string),
+  )
+}
+
 pub type SessionData {
   SessionData(
     access_token: String,
@@ -188,11 +204,19 @@ fn view_login(model: Model) {
   html.form([event.on_submit(ClickedLogin)], [
     div([], [
       html.label([], [text("Email")]),
-      html.input([attr.type_("text"), attr.value(model.login_form.email)]),
+      html.input([
+        attr.type_("text"),
+        attr.name("email"),
+        attr.value(model.login_form.email),
+      ]),
     ]),
     div([], [
       html.label([], [text("Passsword")]),
-      html.input([attr.type_("password"), attr.value(model.login_form.password)]),
+      html.input([
+        attr.type_("password"),
+        attr.name("password"),
+        attr.value(model.login_form.password),
+      ]),
     ]),
     div([], [html.input([attr.type_("submit"), attr.value("Login")])]),
   ])
@@ -218,4 +242,8 @@ fn json_error_to_string(error: json.DecodeError) -> String {
     json.UnexpectedSequence(_, _) -> "UnexpectedSequence"
     json.UnexpectedFormat(_) -> "UnexpectedFormat"
   }
+}
+
+fn api_login_url(flags: Flags) {
+  flags.api_url <> "/auth/v1/token?grant_type=password"
 }

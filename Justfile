@@ -1,5 +1,8 @@
+build:
+    npx vite build
+
 dev:
-    gleam run -m lustre/dev start
+    npx vite
 
 login:
     hurl -v \
