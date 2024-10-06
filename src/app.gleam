@@ -5,6 +5,7 @@ import gleam/int
 import gleam/io
 import gleam/json
 import gleam/list
+import gleam/result.{try}
 import lustre
 import lustre/attribute as attr
 import lustre/effect
@@ -50,7 +51,7 @@ pub type Notice {
 
 fn init(flags: Flags) -> #(Model, effect.Effect(Msg)) {
   // io.debug(flags)
-  #(new_model(flags), effect.none())
+  #(new_model(flags), get_session())
 }
 
 pub type Msg {
@@ -58,6 +59,7 @@ pub type Msg {
   ClickedLogin
   ChangedEmail(String)
   ChangedPassword(String)
+  GotSessionData(SessionData)
 }
 
 type Returns =
@@ -89,6 +91,10 @@ pub fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
       io.debug("Clicked login")
       #(model, login(model))
     }
+    GotSessionData(data) -> #(
+      Model(..model, auth: Authenticated(data)),
+      effect.none(),
+    )
   }
 }
 
@@ -132,13 +138,39 @@ fn login(model: Model) -> effect.Effect(Msg) {
   |> lustre_http.send(expect)
 }
 
-fn store_session(data: SessionData) -> effect.Effect(Msg) {
-  let local_storage_result = storage.local()
+fn get_session() -> effect.Effect(Msg) {
+  case get_session_do() {
+    Ok(session_data) ->
+      effect.from(fn(dispatch) { dispatch(GotSessionData(session_data)) })
+    Error(err) -> {
+      io.debug(err)
+      effect.none()
+    }
+  }
+}
 
-  case local_storage_result {
-    Ok(local_storage) -> {
-      let json_string = session_encode(data) |> json.to_string
-      storage.set_item(local_storage, "session", json_string)
+fn get_session_do() -> Result(SessionData, String) {
+  use local_storage <- try(
+    storage.local()
+    |> result.replace_error("Unable to open local storage"),
+  )
+
+  use json_string <- try(
+    storage.get_item(local_storage, "session")
+    |> result.replace_error("Unable to get session data from local storage"),
+  )
+
+  use data <- try(
+    json.decode(json_string, session_data_decoder())
+    |> result.map_error(json_error_to_string),
+  )
+
+  Ok(data)
+}
+
+fn store_session(data: SessionData) -> effect.Effect(Msg) {
+  case store_session_do(data) {
+    Ok(_) -> {
       effect.none()
     }
     Error(_) -> {
@@ -146,6 +178,18 @@ fn store_session(data: SessionData) -> effect.Effect(Msg) {
       effect.none()
     }
   }
+}
+
+fn store_session_do(data: SessionData) -> Result(Nil, String) {
+  use local_storage <- try(
+    storage.local()
+    |> result.replace_error("Unable to open local storage"),
+  )
+
+  let json_string = session_encode(data) |> json.to_string
+
+  storage.set_item(local_storage, "session", json_string)
+  |> result.replace_error("Unable to store session data in local storage")
 }
 
 /// Decoders
@@ -206,10 +250,17 @@ pub fn session_user_encode(user: User) {
 
 /// Views
 pub fn view(model: Model) -> element.Element(Msg) {
-  html.div([], [view_login(model)])
+  case model.auth {
+    Unauthenticated -> view_unauthenticated(model)
+    Authenticated(data) -> view_authenticated(model, data)
+  }
 }
 
-fn view_login(model: Model) {
+fn view_unauthenticated(model: Model) {
+  div([], [view_login_form(model)])
+}
+
+fn view_login_form(model: Model) {
   html.form([event.on_submit(ClickedLogin)], [
     div([], [
       html.label([], [text("Email")]),
@@ -231,6 +282,10 @@ fn view_login(model: Model) {
     ]),
     div([], [html.input([attr.type_("submit"), attr.value("Login")])]),
   ])
+}
+
+fn view_authenticated(model: Model, session: SessionData) {
+  div([], [text(session.user.email)])
 }
 
 /// Helpers
