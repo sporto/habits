@@ -1,3 +1,4 @@
+import birl
 import gleam/dynamic
 import gleam/http.{type Method, Get, Https, Post}
 import gleam/http/request.{type Request}
@@ -23,9 +24,9 @@ pub type Flags {
 pub type Model {
   Model(
     auth: Auth,
+    flags: Flags,
     login_form: LoginForm,
     new_habit_form: NewHabitForm,
-    flags: Flags,
     notices: List(Notice),
   )
 }
@@ -54,11 +55,11 @@ pub fn new_login_form() -> LoginForm {
 }
 
 pub type NewHabitForm {
-  NewHabitForm(name: String)
+  NewHabitForm(label: String)
 }
 
 fn new_habit_form() -> NewHabitForm {
-  NewHabitForm(name: "")
+  NewHabitForm(label: "")
 }
 
 pub type Notice {
@@ -77,8 +78,8 @@ pub type Msg {
   ChangedEmail(String)
   ChangedPassword(String)
   GotSessionData(SessionData)
-  NewHabitNameChanged(String)
-  NewHabitFormSubmitted
+  NewHabitLabelChanged(String)
+  NewHabitFormSubmitted(SessionData)
 }
 
 type Returns =
@@ -113,14 +114,14 @@ pub fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
     }
     GotSessionData(data) -> #(
       Model(..model, auth: Authenticated(data)),
-      get_today_habits(model),
+      get_today_habits(model, data),
     )
-    NewHabitNameChanged(name) -> #(
-      Model(..model, new_habit_form: NewHabitForm(name: name)),
+    NewHabitLabelChanged(label) -> #(
+      Model(..model, new_habit_form: NewHabitForm(label: label)),
       effect.none(),
     )
-    NewHabitFormSubmitted -> {
-      #(model, effect.none())
+    NewHabitFormSubmitted(session) -> {
+      #(model, create_habit(model, session))
     }
   }
 }
@@ -219,7 +220,7 @@ fn store_session_do(data: SessionData) -> Result(Nil, String) {
   |> result.replace_error("Unable to store session data in local storage")
 }
 
-fn get_today_habits(model: Model) -> effect.Effect(Msg) {
+fn get_today_habits(model: Model, session: SessionData) -> effect.Effect(Msg) {
   let expect = lustre_http.expect_anything(ApiReturnedHabits)
 
   api_crud_request(
@@ -228,6 +229,28 @@ fn get_today_habits(model: Model) -> effect.Effect(Msg) {
     path: "/habits",
     payload: None,
     query: [],
+    session:,
+  )
+  |> lustre_http.send(expect)
+}
+
+fn create_habit(model: Model, session: SessionData) -> effect.Effect(Msg) {
+  let expect = lustre_http.expect_anything(ApiReturnedHabits)
+
+  let payload =
+    json.object([
+      //
+      // #("user_id", json.string(session.user.id)),
+      #("label", json.string(model.new_habit_form.label)),
+    ])
+
+  api_crud_request(
+    flags: model.flags,
+    method: Post,
+    path: "/habits",
+    payload: Some(payload),
+    query: [],
+    session:,
   )
   |> lustre_http.send(expect)
 }
@@ -292,7 +315,19 @@ pub fn session_user_encode(user: User) {
 pub fn view(model: Model) -> element.Element(Msg) {
   case model.auth {
     Unauthenticated -> view_unauthenticated(model)
-    Authenticated(data) -> view_authenticated(model, data)
+    Authenticated(data) -> {
+      let now = birl.now() |> birl.to_unix
+
+      case now > data.expires_at {
+        True -> {
+          io.debug("Session expired")
+          view_unauthenticated(model)
+        }
+        False -> {
+          view_authenticated(model, data)
+        }
+      }
+    }
   }
 }
 
@@ -328,7 +363,7 @@ fn view_authenticated(model: Model, session: SessionData) {
   div([], [
     view_header(model, session),
     //
-    view_new_habit_form(model),
+    view_new_habit_form(model, session),
   ])
 }
 
@@ -339,14 +374,14 @@ fn view_header(model: Model, session: SessionData) {
   ])
 }
 
-fn view_new_habit_form(model: Model) {
+fn view_new_habit_form(model: Model, session: SessionData) {
   html.section([class("t-new-habit-form py-3")], [
     //
     html.form(
       [
         //
         class("flex space-x-2 p-2 items-center"),
-        event.on_submit(NewHabitFormSubmitted),
+        event.on_submit(NewHabitFormSubmitted(session)),
       ],
       [
         //
@@ -354,9 +389,9 @@ fn view_new_habit_form(model: Model) {
         html.input([
           class("h-8 rounded"),
           attr.type_("text"),
-          attr.name("name"),
-          attr.value(model.new_habit_form.name),
-          event.on_input(NewHabitNameChanged),
+          attr.name("label"),
+          attr.value(model.new_habit_form.label),
+          event.on_input(NewHabitLabelChanged),
         ]),
         html.input([
           class("cursor-pointer border px-2 py-1 rounded h-8"),
@@ -428,6 +463,7 @@ fn api_crud_request(
   path path: String,
   payload payload: Option(json.Json),
   query query: List(#(String, String)),
+  session session: SessionData,
 ) -> Request(String) {
   build_api_request(
     flags: flags,
@@ -436,4 +472,5 @@ fn api_crud_request(
     payload:,
     query:,
   )
+  |> request.set_header("Authorization", "Bearer " <> session.access_token)
 }
