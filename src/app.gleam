@@ -8,7 +8,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result.{try}
 import lustre
-import lustre/attribute as attr
+import lustre/attribute.{class} as attr
 import lustre/effect
 import lustre/element
 import lustre/element/html.{div, text}
@@ -21,7 +21,13 @@ pub type Flags {
 }
 
 pub type Model {
-  Model(auth: Auth, login_form: LoginForm, flags: Flags, notices: List(Notice))
+  Model(
+    auth: Auth,
+    login_form: LoginForm,
+    new_habit_form: NewHabitForm,
+    flags: Flags,
+    notices: List(Notice),
+  )
 }
 
 fn new_model(flags: Flags) -> Model {
@@ -29,6 +35,7 @@ fn new_model(flags: Flags) -> Model {
     auth: Unauthenticated,
     flags:,
     login_form: new_login_form(),
+    new_habit_form: new_habit_form(),
     notices: [],
   )
 }
@@ -44,6 +51,14 @@ pub type LoginForm {
 
 pub fn new_login_form() -> LoginForm {
   LoginForm(email: "", password: "")
+}
+
+pub type NewHabitForm {
+  NewHabitForm(name: String)
+}
+
+fn new_habit_form() -> NewHabitForm {
+  NewHabitForm(name: "")
 }
 
 pub type Notice {
@@ -62,6 +77,8 @@ pub type Msg {
   ChangedEmail(String)
   ChangedPassword(String)
   GotSessionData(SessionData)
+  NewHabitNameChanged(String)
+  NewHabitFormSubmitted
 }
 
 type Returns =
@@ -98,6 +115,13 @@ pub fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
       Model(..model, auth: Authenticated(data)),
       get_today_habits(model),
     )
+    NewHabitNameChanged(name) -> #(
+      Model(..model, new_habit_form: NewHabitForm(name: name)),
+      effect.none(),
+    )
+    NewHabitFormSubmitted -> {
+      #(model, effect.none())
+    }
   }
 }
 
@@ -301,7 +325,47 @@ fn view_login_form(model: Model) {
 }
 
 fn view_authenticated(model: Model, session: SessionData) {
-  div([], [text(session.user.email)])
+  div([], [
+    view_header(model, session),
+    //
+    view_new_habit_form(model),
+  ])
+}
+
+fn view_header(model: Model, session: SessionData) {
+  html.header([class("t-header p-2 bg-black text-white")], [
+    text(session.user.email),
+    //
+  ])
+}
+
+fn view_new_habit_form(model: Model) {
+  html.section([class("t-new-habit-form py-3")], [
+    //
+    html.form(
+      [
+        //
+        class("flex space-x-2 p-2 items-center"),
+        event.on_submit(NewHabitFormSubmitted),
+      ],
+      [
+        //
+        html.label([class("")], [text("New")]),
+        html.input([
+          class("h-8 rounded"),
+          attr.type_("text"),
+          attr.name("name"),
+          attr.value(model.new_habit_form.name),
+          event.on_input(NewHabitNameChanged),
+        ]),
+        html.input([
+          class("cursor-pointer border px-2 py-1 rounded h-8"),
+          attr.type_("submit"),
+          attr.value("Add"),
+        ]),
+      ],
+    ),
+  ])
 }
 
 /// Helpers
