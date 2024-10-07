@@ -16,6 +16,7 @@ import lustre/element/html.{div, text}
 import lustre/event
 import lustre_http.{type HttpError}
 import plinth/javascript/storage
+import return
 
 pub type Flags {
   Flags(api_host: String, api_public_key: String)
@@ -25,6 +26,7 @@ pub type Model {
   Model(
     auth: Auth,
     flags: Flags,
+    habits: RemoteData(List(Habit)),
     login_form: LoginForm,
     new_habit_form: NewHabitForm,
     notices: List(Notice),
@@ -35,10 +37,18 @@ fn new_model(flags: Flags) -> Model {
   Model(
     auth: Unauthenticated,
     flags:,
+    habits: RemoteDataNotAsked,
     login_form: new_login_form(),
     new_habit_form: new_habit_form(),
     notices: [],
   )
+}
+
+pub type RemoteData(data) {
+  RemoteDataNotAsked
+  RemoteDataLoading
+  RemoteDataSuccess(data)
+  RemoteDataFailure
 }
 
 pub type Auth {
@@ -66,6 +76,22 @@ pub type Notice {
   Notice(message: String)
 }
 
+pub type Habit {
+  Habit(id: String, label: String)
+}
+
+fn habit_decoder() {
+  dynamic.decode2(
+    Habit,
+    dynamic.field("id", dynamic.string),
+    dynamic.field("label", dynamic.string),
+  )
+}
+
+fn habits_decoder() {
+  dynamic.list(habit_decoder())
+}
+
 fn init(flags: Flags) -> #(Model, effect.Effect(Msg)) {
   // io.debug(flags)
   #(new_model(flags), get_session())
@@ -73,7 +99,8 @@ fn init(flags: Flags) -> #(Model, effect.Effect(Msg)) {
 
 pub type Msg {
   ApiReturnedSessionData(Result(SessionData, HttpError))
-  ApiReturnedHabits(Result(Nil, HttpError))
+  ApiReturnedHabits(Result(List(Habit), HttpError))
+  ApiCreatedHabit(Result(Nil, HttpError))
   ClickedLogin
   ChangedEmail(String)
   ChangedPassword(String)
@@ -93,10 +120,28 @@ pub fn main(flags: dynamic.Dynamic) {
   Nil
 }
 
-pub fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
+pub fn update(model: Model, msg: Msg) -> Returns {
   case msg {
     ApiReturnedSessionData(result) -> on_api_returned_auth_data(model, result)
-    ApiReturnedHabits(_) -> #(model, effect.none())
+    ApiReturnedHabits(result) -> {
+      case result {
+        Ok(habits) -> {
+          #(Model(..model, habits: RemoteDataSuccess(habits)), effect.none())
+        }
+        Error(error) -> {
+          io.debug(error)
+          #(model, effect.none())
+        }
+      }
+    }
+    ApiCreatedHabit(_result) -> {
+      #(
+        Model(..model, new_habit_form: new_habit_form()),
+        effect.none(),
+        // TODO, fetch habits again
+      // get_today_habits(model, model.auth),
+      )
+    }
     ChangedEmail(email) -> #(
       Model(..model, login_form: LoginForm(..model.login_form, email: email)),
       effect.none(),
@@ -112,10 +157,10 @@ pub fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
       io.debug("Clicked login")
       #(model, login(model))
     }
-    GotSessionData(data) -> #(
-      Model(..model, auth: Authenticated(data)),
-      get_today_habits(model, data),
-    )
+    GotSessionData(data) -> {
+      #(Model(..model, auth: Authenticated(data)), effect.none())
+      |> return.then(get_today_habits(_, data))
+    }
     NewHabitLabelChanged(label) -> #(
       Model(..model, new_habit_form: NewHabitForm(label: label)),
       effect.none(),
@@ -220,22 +265,25 @@ fn store_session_do(data: SessionData) -> Result(Nil, String) {
   |> result.replace_error("Unable to store session data in local storage")
 }
 
-fn get_today_habits(model: Model, session: SessionData) -> effect.Effect(Msg) {
-  let expect = lustre_http.expect_anything(ApiReturnedHabits)
+fn get_today_habits(model: Model, session: SessionData) -> Returns {
+  let expect = lustre_http.expect_json(habits_decoder(), ApiReturnedHabits)
 
-  api_crud_request(
-    flags: model.flags,
-    method: Get,
-    path: "/habits",
-    payload: None,
-    query: [],
-    session:,
-  )
-  |> lustre_http.send(expect)
+  let effect =
+    api_crud_request(
+      flags: model.flags,
+      method: Get,
+      path: "/habits",
+      payload: None,
+      query: [],
+      session:,
+    )
+    |> lustre_http.send(expect)
+
+  #(Model(..model, habits: RemoteDataLoading), effect)
 }
 
 fn create_habit(model: Model, session: SessionData) -> effect.Effect(Msg) {
-  let expect = lustre_http.expect_anything(ApiReturnedHabits)
+  let expect = lustre_http.expect_anything(ApiCreatedHabit)
 
   let payload =
     json.object([
@@ -364,6 +412,7 @@ fn view_authenticated(model: Model, session: SessionData) {
     view_header(model, session),
     //
     view_new_habit_form(model, session),
+    view_habits(model),
   ])
 }
 
@@ -401,6 +450,24 @@ fn view_new_habit_form(model: Model, session: SessionData) {
       ],
     ),
   ])
+}
+
+fn view_habits(model: Model) {
+  case model.habits {
+    RemoteDataNotAsked | RemoteDataLoading -> text("Loading habits...")
+    RemoteDataSuccess(habits) -> view_habits_with_data(habits)
+    RemoteDataFailure -> text("Something went wrong")
+  }
+}
+
+fn view_habits_with_data(habits: List(Habit)) {
+  html.section([class("p-2")], [
+    html.ul([class("t-habits-list")], list.map(habits, view_habit)),
+  ])
+}
+
+fn view_habit(habit: Habit) {
+  html.li([class("t-habit")], [text(habit.label)])
 }
 
 /// Helpers
