@@ -11,3 +11,11 @@ pub fn then(
   let #(new_model, new_fx) = next(model)
   #(new_model, effect.batch([fx, new_fx]))
 }
+
+pub fn map_msg(
+  current: Return(model, msg),
+  mapper: fn(msg) -> msg2,
+) -> Return(model, msg2) {
+  let #(model, fx) = current
+  #(model, effect.map(fx, mapper))
+}

@@ -8,15 +8,15 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result.{try}
+import lib/return
 import lustre
 import lustre/attribute.{class} as attr
 import lustre/effect
-import lustre/element
+import lustre/element.{type Element}
 import lustre/element/html.{div, text}
 import lustre/event
 import lustre_http.{type HttpError}
 import plinth/javascript/storage
-import return
 
 pub type Flags {
   Flags(api_host: String, api_public_key: String)
@@ -98,15 +98,23 @@ fn init(flags: Flags) -> #(Model, effect.Effect(Msg)) {
 }
 
 pub type Msg {
+  UnauthenticatedMsg(UnauthenticatedMsg)
+  AuthenticatedMsg(SessionData, AuthenticatedMsg)
+}
+
+pub type UnauthenticatedMsg {
   ApiReturnedSessionData(Result(SessionData, HttpError))
-  ApiReturnedHabits(Result(List(Habit), HttpError))
-  ApiCreatedHabit(Result(Nil, HttpError))
   ClickedLogin
   ChangedEmail(String)
   ChangedPassword(String)
-  GotSessionData(SessionData)
+  GotSessionDataFromLS(SessionData)
+}
+
+pub type AuthenticatedMsg {
+  ApiCreatedHabit(Result(Nil, HttpError))
+  ApiReturnedHabits(Result(List(Habit), HttpError))
   NewHabitLabelChanged(String)
-  NewHabitFormSubmitted(SessionData)
+  NewHabitFormSubmitted
 }
 
 type Returns =
@@ -122,7 +130,48 @@ pub fn main(flags: dynamic.Dynamic) {
 
 pub fn update(model: Model, msg: Msg) -> Returns {
   case msg {
+    UnauthenticatedMsg(unauth_msg) -> update_unauthenticated(model, unauth_msg)
+    AuthenticatedMsg(session, auth_msg) ->
+      update_authenticated(session, model, auth_msg)
+      |> return.map_msg(AuthenticatedMsg(session, _))
+  }
+}
+
+pub fn update_unauthenticated(model: Model, msg: UnauthenticatedMsg) -> Returns {
+  case msg {
     ApiReturnedSessionData(result) -> on_api_returned_auth_data(model, result)
+
+    ChangedEmail(email) -> #(
+      Model(..model, login_form: LoginForm(..model.login_form, email: email)),
+      effect.none(),
+    )
+    ChangedPassword(password) -> #(
+      Model(
+        ..model,
+        login_form: LoginForm(..model.login_form, password: password),
+      ),
+      effect.none(),
+    )
+    ClickedLogin -> {
+      io.debug("Clicked login")
+      #(model, login(model))
+    }
+    GotSessionDataFromLS(data) -> {
+      #(Model(..model, auth: Authenticated(data)), effect.none())
+      |> return.then(get_today_habits(_, data))
+    }
+  }
+}
+
+type ReturnsAuthenticated =
+  #(Model, effect.Effect(AuthenticatedMsg))
+
+pub fn update_authenticated(
+  session: SessionData,
+  model: Model,
+  msg: AuthenticatedMsg,
+) -> ReturnsAuthenticated {
+  case msg {
     ApiReturnedHabits(result) -> {
       case result {
         Ok(habits) -> {
@@ -142,30 +191,11 @@ pub fn update(model: Model, msg: Msg) -> Returns {
       // get_today_habits(model, model.auth),
       )
     }
-    ChangedEmail(email) -> #(
-      Model(..model, login_form: LoginForm(..model.login_form, email: email)),
-      effect.none(),
-    )
-    ChangedPassword(password) -> #(
-      Model(
-        ..model,
-        login_form: LoginForm(..model.login_form, password: password),
-      ),
-      effect.none(),
-    )
-    ClickedLogin -> {
-      io.debug("Clicked login")
-      #(model, login(model))
-    }
-    GotSessionData(data) -> {
-      #(Model(..model, auth: Authenticated(data)), effect.none())
-      |> return.then(get_today_habits(_, data))
-    }
     NewHabitLabelChanged(label) -> #(
       Model(..model, new_habit_form: NewHabitForm(label: label)),
       effect.none(),
     )
-    NewHabitFormSubmitted(session) -> {
+    NewHabitFormSubmitted -> {
       #(model, create_habit(model, session))
     }
   }
@@ -209,12 +239,14 @@ fn login(model: Model) -> effect.Effect(Msg) {
     payload: Some(payload),
   )
   |> lustre_http.send(expect)
+  |> effect.map(UnauthenticatedMsg)
 }
 
 fn get_session() -> effect.Effect(Msg) {
   case get_session_do() {
     Ok(session_data) ->
-      effect.from(fn(dispatch) { dispatch(GotSessionData(session_data)) })
+      effect.from(fn(dispatch) { dispatch(GotSessionDataFromLS(session_data)) })
+      |> effect.map(UnauthenticatedMsg)
     Error(err) -> {
       io.debug(err)
       effect.none()
@@ -266,7 +298,10 @@ fn store_session_do(data: SessionData) -> Result(Nil, String) {
 }
 
 fn get_today_habits(model: Model, session: SessionData) -> Returns {
-  let expect = lustre_http.expect_json(habits_decoder(), ApiReturnedHabits)
+  let expect =
+    lustre_http.expect_json(habits_decoder(), fn(result) {
+      AuthenticatedMsg(session, ApiReturnedHabits(result))
+    })
 
   let effect =
     api_crud_request(
@@ -282,7 +317,10 @@ fn get_today_habits(model: Model, session: SessionData) -> Returns {
   #(Model(..model, habits: RemoteDataLoading), effect)
 }
 
-fn create_habit(model: Model, session: SessionData) -> effect.Effect(Msg) {
+fn create_habit(
+  model: Model,
+  session: SessionData,
+) -> effect.Effect(AuthenticatedMsg) {
   let expect = lustre_http.expect_anything(ApiCreatedHabit)
 
   let payload =
@@ -362,24 +400,27 @@ pub fn session_user_encode(user: User) {
 /// Views
 pub fn view(model: Model) -> element.Element(Msg) {
   case model.auth {
-    Unauthenticated -> view_unauthenticated(model)
-    Authenticated(data) -> {
+    Unauthenticated ->
+      view_unauthenticated(model) |> element.map(UnauthenticatedMsg)
+
+    Authenticated(session) -> {
       let now = birl.now() |> birl.to_unix
 
-      case now > data.expires_at {
+      case now > session.expires_at {
         True -> {
           io.debug("Session expired")
-          view_unauthenticated(model)
+          view_unauthenticated(model) |> element.map(UnauthenticatedMsg)
         }
         False -> {
-          view_authenticated(model, data)
+          view_authenticated(model, session)
+          |> element.map(AuthenticatedMsg(session, _))
         }
       }
     }
   }
 }
 
-fn view_unauthenticated(model: Model) {
+fn view_unauthenticated(model: Model) -> Element(UnauthenticatedMsg) {
   div([], [view_login_form(model)])
 }
 
@@ -407,7 +448,10 @@ fn view_login_form(model: Model) {
   ])
 }
 
-fn view_authenticated(model: Model, session: SessionData) {
+fn view_authenticated(
+  model: Model,
+  session: SessionData,
+) -> Element(AuthenticatedMsg) {
   div([], [
     view_header(model, session),
     //
@@ -430,7 +474,7 @@ fn view_new_habit_form(model: Model, session: SessionData) {
       [
         //
         class("flex space-x-2 p-2 items-center"),
-        event.on_submit(NewHabitFormSubmitted(session)),
+        event.on_submit(NewHabitFormSubmitted),
       ],
       [
         //
