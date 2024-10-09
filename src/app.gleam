@@ -1,4 +1,4 @@
-import birl
+import birl.{type Day}
 import gleam/dynamic
 import gleam/http.{type Method, Get, Https, Post}
 import gleam/http/request.{type Request}
@@ -25,8 +25,10 @@ pub type Flags {
 pub type Model {
   Model(
     auth: Auth,
+    // checks: RemoteData(List(Check)),
     flags: Flags,
     habits: RemoteData(List(Habit)),
+    is_adding: Bool,
     login_form: LoginForm,
     new_habit_form: NewHabitForm,
     notices: List(Notice),
@@ -36,8 +38,10 @@ pub type Model {
 fn new_model(flags: Flags) -> Model {
   Model(
     auth: Unauthenticated,
+    // checks: RemoteDataNotAsked,
     flags:,
     habits: RemoteDataNotAsked,
+    is_adding: False,
     login_form: new_login_form(),
     new_habit_form: new_habit_form(),
     notices: [],
@@ -48,7 +52,7 @@ pub type RemoteData(data) {
   RemoteDataNotAsked
   RemoteDataLoading
   RemoteDataSuccess(data)
-  RemoteDataFailure
+  RemoteDataFailure(String)
 }
 
 pub type Auth {
@@ -76,9 +80,15 @@ pub type Notice {
   Notice(message: String)
 }
 
+pub type HabitCollection {
+  HabitCollection(date: Day, habits: List(Habit))
+}
+
 pub type Habit {
   Habit(id: String, label: String)
 }
+
+// pub type CheckCollection
 
 fn habit_decoder() {
   dynamic.decode2(
@@ -133,7 +143,6 @@ pub fn update(model: Model, msg: Msg) -> Returns {
     UnauthenticatedMsg(unauth_msg) -> update_unauthenticated(model, unauth_msg)
     AuthenticatedMsg(session, auth_msg) ->
       update_authenticated(session, model, auth_msg)
-      |> return.map_msg(AuthenticatedMsg(session, _))
   }
 }
 
@@ -156,21 +165,18 @@ pub fn update_unauthenticated(model: Model, msg: UnauthenticatedMsg) -> Returns 
       io.debug("Clicked login")
       #(model, login(model))
     }
-    GotSessionDataFromLS(data) -> {
-      #(Model(..model, auth: Authenticated(data)), effect.none())
-      |> return.then(get_today_habits(_, data))
+    GotSessionDataFromLS(session) -> {
+      #(Model(..model, auth: Authenticated(session)), effect.none())
+      |> return.then(fetch_today_habits(_, session))
     }
   }
 }
-
-type ReturnsAuthenticated =
-  #(Model, effect.Effect(AuthenticatedMsg))
 
 pub fn update_authenticated(
   session: SessionData,
   model: Model,
   msg: AuthenticatedMsg,
-) -> ReturnsAuthenticated {
+) -> Returns {
   case msg {
     ApiReturnedHabits(result) -> {
       case result {
@@ -179,24 +185,32 @@ pub fn update_authenticated(
         }
         Error(error) -> {
           io.debug(error)
-          #(model, effect.none())
+          #(
+            Model(
+              ..model,
+              habits: RemoteDataFailure(http_error_to_string(error)),
+            ),
+            effect.none(),
+          )
         }
       }
     }
     ApiCreatedHabit(_result) -> {
       #(
-        Model(..model, new_habit_form: new_habit_form()),
+        Model(..model, new_habit_form: new_habit_form(), is_adding: False),
         effect.none(),
-        // TODO, fetch habits again
-      // get_today_habits(model, model.auth),
       )
+      |> return.then(fetch_today_habits(_, session))
     }
     NewHabitLabelChanged(label) -> #(
       Model(..model, new_habit_form: NewHabitForm(label: label)),
       effect.none(),
     )
     NewHabitFormSubmitted -> {
-      #(model, create_habit(model, session))
+      #(
+        Model(..model, is_adding: True),
+        create_habit(model, session) |> effect.map(AuthenticatedMsg(session, _)),
+      )
     }
   }
 }
@@ -297,7 +311,12 @@ fn store_session_do(data: SessionData) -> Result(Nil, String) {
   |> result.replace_error("Unable to store session data in local storage")
 }
 
-fn get_today_habits(model: Model, session: SessionData) -> Returns {
+fn fetch_today_habits(model: Model, session: SessionData) -> Returns {
+  fetch_habits_for_date(model, session)
+}
+
+fn fetch_habits_for_date(model: Model, session: SessionData) -> Returns {
+  // TODO, add date
   let expect =
     lustre_http.expect_json(habits_decoder(), fn(result) {
       AuthenticatedMsg(session, ApiReturnedHabits(result))
@@ -421,13 +440,13 @@ pub fn view(model: Model) -> element.Element(Msg) {
 }
 
 fn view_unauthenticated(model: Model) -> Element(UnauthenticatedMsg) {
-  div([], [view_login_form(model)])
+  html.main([class("pt-4 flex justify-center")], [view_login_form(model)])
 }
 
 fn view_login_form(model: Model) {
-  html.form([event.on_submit(ClickedLogin)], [
+  html.form([event.on_submit(ClickedLogin), class("space-y-4")], [
     div([], [
-      html.label([], [text("Email")]),
+      html.label([class("block")], [text("Email")]),
       html.input([
         attr.type_("text"),
         attr.name("email"),
@@ -436,7 +455,7 @@ fn view_login_form(model: Model) {
       ]),
     ]),
     div([], [
-      html.label([], [text("Passsword")]),
+      html.label([class("block")], [text("Passsword")]),
       html.input([
         attr.type_("password"),
         attr.name("password"),
@@ -444,7 +463,13 @@ fn view_login_form(model: Model) {
         event.on_input(ChangedPassword),
       ]),
     ]),
-    div([], [html.input([attr.type_("submit"), attr.value("Login")])]),
+    div([], [
+      html.input([
+        class("border p-2"),
+        attr.type_("submit"),
+        attr.value("Login"),
+      ]),
+    ]),
   ])
 }
 
@@ -452,7 +477,7 @@ fn view_authenticated(
   model: Model,
   session: SessionData,
 ) -> Element(AuthenticatedMsg) {
-  div([], [
+  html.main([], [
     view_header(model, session),
     //
     view_new_habit_form(model, session),
@@ -490,6 +515,7 @@ fn view_new_habit_form(model: Model, session: SessionData) {
           class("cursor-pointer border px-2 py-1 rounded h-8"),
           attr.type_("submit"),
           attr.value("Add"),
+          attr.disabled(model.is_adding),
         ]),
       ],
     ),
@@ -498,9 +524,10 @@ fn view_new_habit_form(model: Model, session: SessionData) {
 
 fn view_habits(model: Model) {
   case model.habits {
-    RemoteDataNotAsked | RemoteDataLoading -> text("Loading habits...")
+    RemoteDataNotAsked | RemoteDataLoading ->
+      html.section([class("p-2")], [text("Loading habits...")])
     RemoteDataSuccess(habits) -> view_habits_with_data(habits)
-    RemoteDataFailure -> text("Something went wrong")
+    RemoteDataFailure(error) -> text(error)
   }
 }
 
@@ -511,7 +538,12 @@ fn view_habits_with_data(habits: List(Habit)) {
 }
 
 fn view_habit(habit: Habit) {
-  html.li([class("t-habit")], [text(habit.label)])
+  html.li([class("t-habit")], [
+    html.label([class("space-x-2")], [
+      html.span([], [html.input([attr.type_("checkbox"), attr.checked(False)])]),
+      html.span([], [text(habit.label)]),
+    ]),
+  ])
 }
 
 /// Helpers
