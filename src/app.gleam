@@ -1,4 +1,4 @@
-import birl.{type Day}
+import birl.{type Day, type Time}
 import gleam/dynamic
 import gleam/http.{type Method, Get, Https, Post}
 import gleam/http/request.{type Request}
@@ -85,21 +85,38 @@ pub type HabitCollection {
 }
 
 pub type Habit {
-  Habit(id: String, label: String)
+  Habit(id: String, label: String, checks: List(Check))
+}
+
+pub type Check {
+  Check(time: Time)
 }
 
 // pub type CheckCollection
 
-fn habit_decoder() {
-  dynamic.decode2(
+fn habit_decoder() -> dynamic.Decoder(Habit) {
+  dynamic.decode3(
     Habit,
     dynamic.field("id", dynamic.string),
     dynamic.field("label", dynamic.string),
+    dynamic.field("checks", dynamic.list(check_decoder())),
   )
 }
 
-fn habits_decoder() {
+fn habits_decoder() -> dynamic.Decoder(List(Habit)) {
   dynamic.list(habit_decoder())
+}
+
+fn check_decoder() -> dynamic.Decoder(Check) {
+  dynamic.decode1(Check, dynamic.field("date", datetime_decoder))
+}
+
+fn datetime_decoder(value: dynamic.Dynamic) {
+  dynamic.string(value)
+  |> result.then(fn(s) {
+    birl.parse(s)
+    |> result.replace_error([dynamic.DecodeError("A datetime", s, [])])
+  })
 }
 
 fn init(flags: Flags) -> #(Model, effect.Effect(Msg)) {
@@ -336,6 +353,8 @@ fn fetch_habits_for_date(
       AuthenticatedMsg(session, ApiReturnedHabits(date, result))
     })
 
+  let date_str = date_to_string(date)
+
   // let payload = json.object([#("date", json.string("2024-12-10"))])
 
   let effect =
@@ -344,7 +363,7 @@ fn fetch_habits_for_date(
       method: Get,
       path: "/habits",
       payload: None,
-      query: [],
+      query: [#("select", "*,checks(*)"), #("checks.date", "eq." <> date_str)],
       session:,
     )
     |> lustre_http.send(expect)
@@ -601,12 +620,22 @@ fn view_habits_with_data(habit_collection: HabitCollection) {
 }
 
 fn view_habit(habit: Habit, date: Day) {
+  let is_checked =
+    habit.checks
+    |> list.any(fn(check) {
+      io.debug(check.time)
+      io.debug(birl.get_day(check.time))
+      io.debug(date)
+      io.debug(birl.get_day(check.time) == date)
+      birl.get_day(check.time) == date
+    })
+
   html.li([class("t-habit")], [
     html.label([class("space-x-2")], [
       html.span([], [
         html.input([
           attr.type_("checkbox"),
-          attr.checked(False),
+          attr.checked(is_checked),
           event.on_check(UserToggledHabit(habit, date, _)),
         ]),
       ]),
