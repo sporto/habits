@@ -27,7 +27,7 @@ pub type Model {
     auth: Auth,
     // checks: RemoteData(List(Check)),
     flags: Flags,
-    habits: RemoteData(List(Habit)),
+    habits: RemoteData(HabitCollection),
     is_adding: Bool,
     login_form: LoginForm,
     new_habit_form: NewHabitForm,
@@ -81,7 +81,7 @@ pub type Notice {
 }
 
 pub type HabitCollection {
-  HabitCollection(date: Day, habits: List(Habit))
+  HabitCollection(date: Day, items: List(Habit))
 }
 
 pub type Habit {
@@ -122,9 +122,11 @@ pub type UnauthenticatedMsg {
 
 pub type AuthenticatedMsg {
   ApiCreatedHabit(Result(Nil, HttpError))
-  ApiReturnedHabits(Result(List(Habit), HttpError))
+  ApiToggledHabit(Habit, Day, Bool, Result(Nil, HttpError))
+  ApiReturnedHabits(Day, Result(List(Habit), HttpError))
   NewHabitLabelChanged(String)
   NewHabitFormSubmitted
+  UserToggledHabit(Habit, Day, Bool)
 }
 
 type Returns =
@@ -178,10 +180,14 @@ pub fn update_authenticated(
   msg: AuthenticatedMsg,
 ) -> Returns {
   case msg {
-    ApiReturnedHabits(result) -> {
+    ApiReturnedHabits(date, result) -> {
       case result {
         Ok(habits) -> {
-          #(Model(..model, habits: RemoteDataSuccess(habits)), effect.none())
+          let collection = HabitCollection(date, habits)
+          #(
+            Model(..model, habits: RemoteDataSuccess(collection)),
+            effect.none(),
+          )
         }
         Error(error) -> {
           io.debug(error)
@@ -202,15 +208,18 @@ pub fn update_authenticated(
       )
       |> return.then(fetch_today_habits(_, session))
     }
+    ApiToggledHabit(habit, date, state, result) -> {
+      #(model, effect.none())
+    }
     NewHabitLabelChanged(label) -> #(
       Model(..model, new_habit_form: NewHabitForm(label: label)),
       effect.none(),
     )
     NewHabitFormSubmitted -> {
-      #(
-        Model(..model, is_adding: True),
-        create_habit(model, session) |> effect.map(AuthenticatedMsg(session, _)),
-      )
+      #(Model(..model, is_adding: True), create_habit(model, session))
+    }
+    UserToggledHabit(habit, date, state) -> {
+      #(model, toggle_check(model, session, habit, date, state))
     }
   }
 }
@@ -312,15 +321,22 @@ fn store_session_do(data: SessionData) -> Result(Nil, String) {
 }
 
 fn fetch_today_habits(model: Model, session: SessionData) -> Returns {
-  fetch_habits_for_date(model, session)
+  let date = birl.now() |> birl.get_day
+  fetch_habits_for_date(model, session, date)
 }
 
-fn fetch_habits_for_date(model: Model, session: SessionData) -> Returns {
+fn fetch_habits_for_date(
+  model: Model,
+  session: SessionData,
+  date: Day,
+) -> Returns {
   // TODO, add date
   let expect =
     lustre_http.expect_json(habits_decoder(), fn(result) {
-      AuthenticatedMsg(session, ApiReturnedHabits(result))
+      AuthenticatedMsg(session, ApiReturnedHabits(date, result))
     })
+
+  // let payload = json.object([#("date", json.string("2024-12-10"))])
 
   let effect =
     api_crud_request(
@@ -336,10 +352,7 @@ fn fetch_habits_for_date(model: Model, session: SessionData) -> Returns {
   #(Model(..model, habits: RemoteDataLoading), effect)
 }
 
-fn create_habit(
-  model: Model,
-  session: SessionData,
-) -> effect.Effect(AuthenticatedMsg) {
+fn create_habit(model: Model, session: SessionData) -> effect.Effect(Msg) {
   let expect = lustre_http.expect_anything(ApiCreatedHabit)
 
   let payload =
@@ -358,6 +371,53 @@ fn create_habit(
     session:,
   )
   |> lustre_http.send(expect)
+  |> effect.map(AuthenticatedMsg(session, _))
+}
+
+fn toggle_check(
+  model: Model,
+  session: SessionData,
+  habit: Habit,
+  date: Day,
+  state: Bool,
+) -> effect.Effect(Msg) {
+  let message = ApiToggledHabit(habit, date, state, _)
+  let expect = lustre_http.expect_anything(message)
+
+  let date_str = date_to_string(date)
+
+  let payload =
+    json.object([
+      //
+      #("habit_id", json.string(habit.id)),
+      #("date", json.string(date_str)),
+    ])
+
+  let request = case state {
+    True ->
+      api_crud_request(
+        flags: model.flags,
+        method: Post,
+        path: "/checks",
+        payload: Some(payload),
+        query: [],
+        session:,
+      )
+
+    False ->
+      api_crud_request(
+        flags: model.flags,
+        method: http.Delete,
+        path: "/checks",
+        payload: None,
+        query: [#("habit_id", "eq." <> habit.id), #("date", "eq." <> date_str)],
+        session:,
+      )
+  }
+
+  request
+  |> lustre_http.send(expect)
+  |> effect.map(AuthenticatedMsg(session, _))
 }
 
 /// Decoders
@@ -531,16 +591,25 @@ fn view_habits(model: Model) {
   }
 }
 
-fn view_habits_with_data(habits: List(Habit)) {
+fn view_habits_with_data(habit_collection: HabitCollection) {
   html.section([class("p-2")], [
-    html.ul([class("t-habits-list")], list.map(habits, view_habit)),
+    html.ul(
+      [class("t-habits-list")],
+      list.map(habit_collection.items, view_habit(_, habit_collection.date)),
+    ),
   ])
 }
 
-fn view_habit(habit: Habit) {
+fn view_habit(habit: Habit, date: Day) {
   html.li([class("t-habit")], [
     html.label([class("space-x-2")], [
-      html.span([], [html.input([attr.type_("checkbox"), attr.checked(False)])]),
+      html.span([], [
+        html.input([
+          attr.type_("checkbox"),
+          attr.checked(False),
+          event.on_check(UserToggledHabit(habit, date, _)),
+        ]),
+      ]),
       html.span([], [text(habit.label)]),
     ]),
   ])
@@ -611,9 +680,17 @@ fn api_crud_request(
   build_api_request(
     flags: flags,
     method:,
-    path: "/rest/v1/" <> path,
+    path: "/rest/v1" <> path,
     payload:,
     query:,
   )
   |> request.set_header("Authorization", "Bearer " <> session.access_token)
+}
+
+fn date_to_string(date: Day) -> String {
+  int.to_string(date.year)
+  <> "-"
+  <> int.to_string(date.month)
+  <> "-"
+  <> int.to_string(date.date)
 }
