@@ -8,6 +8,7 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result.{try}
+import gleam/string
 import lib/return
 import lustre
 import lustre/attribute.{class} as attr
@@ -25,6 +26,7 @@ pub type Flags {
 pub type Model {
   Model(
     auth: Auth,
+    displayed_date: Day,
     // checks: RemoteData(List(Check)),
     flags: Flags,
     habits: RemoteData(HabitCollection),
@@ -35,10 +37,10 @@ pub type Model {
   )
 }
 
-fn new_model(flags: Flags) -> Model {
+fn new_model(flags: Flags, day: Day) -> Model {
   Model(
     auth: Unauthenticated,
-    // checks: RemoteDataNotAsked,
+    displayed_date: day,
     flags:,
     habits: RemoteDataNotAsked,
     is_adding: False,
@@ -89,7 +91,7 @@ pub type Habit {
 }
 
 pub type Check {
-  Check(time: Time)
+  Check(date: Day)
 }
 
 // pub type CheckCollection
@@ -108,7 +110,40 @@ fn habits_decoder() -> dynamic.Decoder(List(Habit)) {
 }
 
 fn check_decoder() -> dynamic.Decoder(Check) {
-  dynamic.decode1(Check, dynamic.field("date", datetime_decoder))
+  dynamic.decode1(Check, dynamic.field("date", date_decoder))
+}
+
+fn date_decoder(
+  value: dynamic.Dynamic,
+) -> Result(Day, List(dynamic.DecodeError)) {
+  dynamic.string(value)
+  |> result.then(fn(s) {
+    date_str_to_date(s)
+    |> result.map_error(fn(e) { [dynamic.DecodeError(e, s, [])] })
+  })
+}
+
+fn date_str_to_date(input: String) -> Result(Day, String) {
+  case string.split(input, "-") {
+    [year_str, month_str, day_str] -> {
+      use year <- try(
+        int.parse(year_str)
+        |> result.replace_error("Invalid year"),
+      )
+      use month <- try(
+        int.parse(month_str)
+        |> result.replace_error("Invalid month"),
+      )
+      use day <- try(
+        int.parse(day_str)
+        |> result.replace_error("Invalid day"),
+      )
+      Ok(birl.Day(year, month, day))
+    }
+    _ -> {
+      Error("Invalid date " <> input)
+    }
+  }
 }
 
 fn datetime_decoder(value: dynamic.Dynamic) {
@@ -121,7 +156,8 @@ fn datetime_decoder(value: dynamic.Dynamic) {
 
 fn init(flags: Flags) -> #(Model, effect.Effect(Msg)) {
   // io.debug(flags)
-  #(new_model(flags), get_session())
+  let date = birl.now() |> birl.get_day
+  #(new_model(flags, date), get_session())
 }
 
 pub type Msg {
@@ -143,7 +179,7 @@ pub type AuthenticatedMsg {
   ApiReturnedHabits(Day, Result(List(Habit), HttpError))
   NewHabitLabelChanged(String)
   NewHabitFormSubmitted
-  UserToggledHabit(Habit, Day, Bool)
+  UserToggledHabit(Habit, Bool)
 }
 
 type Returns =
@@ -225,7 +261,7 @@ pub fn update_authenticated(
       )
       |> return.then(fetch_today_habits(_, session))
     }
-    ApiToggledHabit(habit, date, state, result) -> {
+    ApiToggledHabit(_habit, _date, _state, _result) -> {
       #(model, effect.none())
     }
     NewHabitLabelChanged(label) -> #(
@@ -235,8 +271,8 @@ pub fn update_authenticated(
     NewHabitFormSubmitted -> {
       #(Model(..model, is_adding: True), create_habit(model, session))
     }
-    UserToggledHabit(habit, date, state) -> {
-      #(model, toggle_check(model, session, habit, date, state))
+    UserToggledHabit(habit, state) -> {
+      #(model, toggle_check(model, session, habit, state))
     }
   }
 }
@@ -377,8 +413,8 @@ fn create_habit(model: Model, session: SessionData) -> effect.Effect(Msg) {
   let payload =
     json.object([
       //
-      // #("user_id", json.string(session.user.id)),
       #("label", json.string(model.new_habit_form.label)),
+      #("started_at", json.string(date_to_string(model.displayed_date))),
     ])
 
   api_crud_request(
@@ -397,13 +433,12 @@ fn toggle_check(
   model: Model,
   session: SessionData,
   habit: Habit,
-  date: Day,
   state: Bool,
 ) -> effect.Effect(Msg) {
-  let message = ApiToggledHabit(habit, date, state, _)
+  let message = ApiToggledHabit(habit, model.displayed_date, state, _)
   let expect = lustre_http.expect_anything(message)
 
-  let date_str = date_to_string(date)
+  let date_str = date_to_string(model.displayed_date)
 
   let payload =
     json.object([
@@ -564,15 +599,15 @@ fn view_authenticated(
   ])
 }
 
-fn view_header(model: Model, session: SessionData) {
+fn view_header(_model: Model, session: SessionData) {
   html.header([class("t-header p-2 bg-black text-white")], [
     text(session.user.email),
     //
   ])
 }
 
-fn view_new_habit_form(model: Model, session: SessionData) {
-  html.section([class("t-new-habit-form py-3")], [
+fn view_new_habit_form(model: Model, _session: SessionData) {
+  html.section([class("t-new-habit-form py-4")], [
     //
     html.form(
       [
@@ -604,14 +639,18 @@ fn view_new_habit_form(model: Model, session: SessionData) {
 fn view_habits(model: Model) {
   case model.habits {
     RemoteDataNotAsked | RemoteDataLoading ->
-      html.section([class("p-2")], [text("Loading habits...")])
+      view_habits_wrapper([text("Loading habits...")])
     RemoteDataSuccess(habits) -> view_habits_with_data(habits)
     RemoteDataFailure(error) -> text(error)
   }
 }
 
+fn view_habits_wrapper(children) {
+  html.section([class("t-habits-wrapper p-4")], children)
+}
+
 fn view_habits_with_data(habit_collection: HabitCollection) {
-  html.section([class("p-2")], [
+  view_habits_wrapper([
     html.ul(
       [class("t-habits-list")],
       list.map(habit_collection.items, view_habit(_, habit_collection.date)),
@@ -622,21 +661,15 @@ fn view_habits_with_data(habit_collection: HabitCollection) {
 fn view_habit(habit: Habit, date: Day) {
   let is_checked =
     habit.checks
-    |> list.any(fn(check) {
-      io.debug(check.time)
-      io.debug(birl.get_day(check.time))
-      io.debug(date)
-      io.debug(birl.get_day(check.time) == date)
-      birl.get_day(check.time) == date
-    })
+    |> list.any(fn(check) { check.date == date })
 
-  html.li([class("t-habit")], [
+  html.li([class("t-habit py-1")], [
     html.label([class("space-x-2")], [
       html.span([], [
         html.input([
           attr.type_("checkbox"),
           attr.checked(is_checked),
-          event.on_check(UserToggledHabit(habit, date, _)),
+          event.on_check(UserToggledHabit(habit, _)),
         ]),
       ]),
       html.span([], [text(habit.label)]),
