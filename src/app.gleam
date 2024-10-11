@@ -2,13 +2,12 @@ import birl
 import gleam/dynamic
 import gleam/http.{type Method, Get, Https, Post}
 import gleam/http/request.{type Request}
-import gleam/int
 import gleam/io
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result.{try}
-import gleam/string
+import gleam/uri.{type Uri}
 import lib/return
 import lustre
 import lustre/attribute.{class} as attr
@@ -17,6 +16,7 @@ import lustre/element.{type Element}
 import lustre/element/html.{div, text}
 import lustre/event
 import lustre_http.{type HttpError}
+import modem
 import plinth/javascript/storage
 import qs
 import rada/date.{type Date}
@@ -126,12 +126,18 @@ fn date_decoder(
 }
 
 fn init(flags: Flags) -> #(Model, effect.Effect(Msg)) {
-  #(new_model(flags, date.today()), get_session())
+  let effects = effect.batch([modem.init(on_url_change), get_session()])
+  #(new_model(flags, date.today()), effects)
+}
+
+fn on_url_change(uri: Uri) -> Msg {
+  OnRouteChange(uri)
 }
 
 pub type Msg {
   UnauthenticatedMsg(UnauthenticatedMsg)
   AuthenticatedMsg(SessionData, AuthenticatedMsg)
+  OnRouteChange(Uri)
 }
 
 pub type UnauthenticatedMsg {
@@ -167,7 +173,32 @@ pub fn update(model: Model, msg: Msg) -> Returns {
     UnauthenticatedMsg(unauth_msg) -> update_unauthenticated(model, unauth_msg)
     AuthenticatedMsg(session, auth_msg) ->
       update_authenticated(session, model, auth_msg)
+    OnRouteChange(uri) -> {
+      case get_date_from_uri(uri) {
+        Ok(date) -> {
+          #(Model(..model, displayed_date: date), effect.none())
+        }
+        Error(_) -> #(model, effect.none())
+      }
+    }
   }
+}
+
+fn get_date_from_uri(uri: Uri) -> Result(Date, String) {
+  let maybe_query = uri.query |> option.to_result("Query not found")
+
+  use query_str <- try(maybe_query)
+
+  use query <- try(qs.default_parse(query_str))
+
+  use dates_str <- try(qs.get(query, "date"))
+
+  use date_str <- try(
+    list.first(dates_str)
+    |> result.replace_error("First date not found"),
+  )
+
+  date.from_iso_string(date_str)
 }
 
 pub fn update_unauthenticated(model: Model, msg: UnauthenticatedMsg) -> Returns {
