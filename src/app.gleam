@@ -574,7 +574,7 @@ fn view_login_form(model: Model) {
     div([], [
       html.label([class("block")], [text("Email")]),
       html.input([
-        class("t-input-email border"),
+        class("t-input-email h-8 rounded border"),
         attr.type_("text"),
         attr.name("email"),
         attr.value(model.login_form.email),
@@ -584,7 +584,7 @@ fn view_login_form(model: Model) {
     div([], [
       html.label([class("block")], [text("Passsword")]),
       html.input([
-        class("t-input-password border"),
+        class("t-input-password h-8 rounded border"),
         attr.type_("password"),
         attr.name("password"),
         attr.value(model.login_form.password),
