@@ -411,7 +411,12 @@ fn fetch_habits_for_displayed_date(
       method: Get,
       path: "/habits",
       payload: None,
-      query: [#("select", "*,checks(*)"), #("checks.date", "eq." <> date_str)],
+      query: [
+        #("started_at", "lte." <> date_str),
+        #("or", "(stopped_at.is.null,stopped_at.gte." <> date_str <> ")"),
+        #("select", "*,checks(*)"),
+        #("checks.date", "eq." <> date_str),
+      ],
       session:,
     )
     |> lustre_http.send(expect)
@@ -673,15 +678,13 @@ fn view_pagination(model: Model) {
   let next = date_to_query_string(tomorrow)
 
   html.section(
-    [class("t-pagination px-4 pt-2 pb-1 flex justify-between items-center")],
+    [class("t-pagination px-4 pt-2 pb-2 flex justify-between items-center")],
     [
-      div([class("font-semibold text-lg")], [
+      div([class("font-semibold text-2xl")], [
         text(date_to_string(model.displayed_date)),
       ]),
-      div([], [
-        html.a([attr.href(today), class("px-2 py-1 underline")], [text("Today")]),
-      ]),
       div([class("py-1 space-x-4")], [
+        html.a([attr.href(today), class("px-2 py-1 underline")], [text("Today")]),
         html.a([attr.href(prev), class("border px-2 py-1")], [text("<")]),
         html.a([attr.href(next), class("border px-2 py-1")], [text(">")]),
       ]),
