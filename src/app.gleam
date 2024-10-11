@@ -126,8 +126,17 @@ fn date_decoder(
 }
 
 fn init(flags: Flags) -> #(Model, effect.Effect(Msg)) {
+  let displayed_date = case modem.initial_uri() {
+    Ok(uri) -> {
+      case get_date_from_uri(uri) {
+        Ok(date) -> date
+        Error(_) -> date.today()
+      }
+    }
+    Error(_) -> date.today()
+  }
   let effects = effect.batch([modem.init(on_url_change), get_session()])
-  #(new_model(flags, date.today()), effects)
+  #(new_model(flags, displayed_date), effects)
 }
 
 fn on_url_change(uri: Uri) -> Msg {
@@ -177,10 +186,21 @@ pub fn update(model: Model, msg: Msg) -> Returns {
       case get_date_from_uri(uri) {
         Ok(date) -> {
           #(Model(..model, displayed_date: date), effect.none())
+          |> return.then(do_if_authenticated(_, fetch_habits_for_displayed_date))
         }
         Error(_) -> #(model, effect.none())
       }
     }
+  }
+}
+
+fn do_if_authenticated(
+  model: Model,
+  do: fn(Model, SessionData) -> Returns,
+) -> Returns {
+  case model.auth {
+    Authenticated(session) -> do(model, session)
+    Unauthenticated -> #(model, effect.none())
   }
 }
 
@@ -629,36 +649,39 @@ fn view_new_habit_form(model: Model, _session: SessionData) {
   ])
 }
 
+fn date_to_query_string(date: Date) -> String {
+  let str = date.to_iso_string(date)
+
+  qs.empty()
+  |> qs.insert("date", [str])
+  |> qs.default_serialize()
+}
+
 fn view_pagination(model: Model) {
-  let yesterday =
-    date.add(model.displayed_date, -1, date.Days)
-    |> date.to_iso_string
+  let today = date.today()
 
-  let tomorrow =
-    date.add(model.displayed_date, 1, date.Days)
-    |> date.to_iso_string
+  let yesterday = date.add(model.displayed_date, -1, date.Days)
 
-  let prev =
-    qs.empty()
-    |> qs.insert("date", [yesterday])
-    |> qs.default_serialize()
+  let tomorrow = date.add(model.displayed_date, 1, date.Days)
 
-  let next =
-    qs.empty()
-    |> qs.insert("date", [tomorrow])
-    |> qs.default_serialize()
+  let today = date_to_query_string(today)
+
+  let prev = date_to_query_string(yesterday)
+
+  let next = date_to_query_string(tomorrow)
 
   html.section(
     [class("t-pagination px-4 pt-2 pb-1 flex justify-between items-center")],
     [
-      div([class("font-semibold")], [text(date_to_string(model.displayed_date))]),
+      div([class("font-semibold text-lg")], [
+        text(date_to_string(model.displayed_date)),
+      ]),
+      div([], [
+        html.a([attr.href(today), class("px-2 py-1 underline")], [text("Today")]),
+      ]),
       div([class("py-1 space-x-4")], [
-        html.a([attr.href(prev), class("border px-2 py-1 cursor-pointer")], [
-          text("<"),
-        ]),
-        html.a([attr.href(next), class("border px-2 py-1 cursor-pointer")], [
-          text(">"),
-        ]),
+        html.a([attr.href(prev), class("border px-2 py-1")], [text("<")]),
+        html.a([attr.href(next), class("border px-2 py-1")], [text(">")]),
       ]),
     ],
   )
