@@ -4,6 +4,9 @@ build:
 dev:
     npx vite
 
+tw:
+    npx tailwindcss -i ./src/app_input.css -o ./src/app.css --watch
+
 login:
     hurl -v \
     --variable api_url=$API_URL \
