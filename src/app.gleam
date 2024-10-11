@@ -1,4 +1,4 @@
-import birl.{type Day, type Time}
+import birl
 import gleam/dynamic
 import gleam/http.{type Method, Get, Https, Post}
 import gleam/http/request.{type Request}
@@ -18,6 +18,8 @@ import lustre/element/html.{div, text}
 import lustre/event
 import lustre_http.{type HttpError}
 import plinth/javascript/storage
+import qs
+import rada/date.{type Date}
 
 pub type Flags {
   Flags(api_host: String, api_public_key: String)
@@ -26,7 +28,7 @@ pub type Flags {
 pub type Model {
   Model(
     auth: Auth,
-    displayed_date: Day,
+    displayed_date: Date,
     // checks: RemoteData(List(Check)),
     flags: Flags,
     habits: RemoteData(HabitCollection),
@@ -37,10 +39,10 @@ pub type Model {
   )
 }
 
-fn new_model(flags: Flags, day: Day) -> Model {
+fn new_model(flags: Flags, date: Date) -> Model {
   Model(
     auth: Unauthenticated,
-    displayed_date: day,
+    displayed_date: date,
     flags:,
     habits: RemoteDataNotAsked,
     is_adding: False,
@@ -83,7 +85,7 @@ pub type Notice {
 }
 
 pub type HabitCollection {
-  HabitCollection(date: Day, items: List(Habit))
+  HabitCollection(date: Date, items: List(Habit))
 }
 
 pub type Habit {
@@ -91,7 +93,7 @@ pub type Habit {
 }
 
 pub type Check {
-  Check(date: Day)
+  Check(date: Date)
 }
 
 // pub type CheckCollection
@@ -115,49 +117,16 @@ fn check_decoder() -> dynamic.Decoder(Check) {
 
 fn date_decoder(
   value: dynamic.Dynamic,
-) -> Result(Day, List(dynamic.DecodeError)) {
+) -> Result(Date, List(dynamic.DecodeError)) {
   dynamic.string(value)
   |> result.then(fn(s) {
-    date_str_to_date(s)
+    date.from_iso_string(s)
     |> result.map_error(fn(e) { [dynamic.DecodeError(e, s, [])] })
   })
 }
 
-fn date_str_to_date(input: String) -> Result(Day, String) {
-  case string.split(input, "-") {
-    [year_str, month_str, day_str] -> {
-      use year <- try(
-        int.parse(year_str)
-        |> result.replace_error("Invalid year"),
-      )
-      use month <- try(
-        int.parse(month_str)
-        |> result.replace_error("Invalid month"),
-      )
-      use day <- try(
-        int.parse(day_str)
-        |> result.replace_error("Invalid day"),
-      )
-      Ok(birl.Day(year, month, day))
-    }
-    _ -> {
-      Error("Invalid date " <> input)
-    }
-  }
-}
-
-fn datetime_decoder(value: dynamic.Dynamic) {
-  dynamic.string(value)
-  |> result.then(fn(s) {
-    birl.parse(s)
-    |> result.replace_error([dynamic.DecodeError("A datetime", s, [])])
-  })
-}
-
 fn init(flags: Flags) -> #(Model, effect.Effect(Msg)) {
-  // io.debug(flags)
-  let date = birl.now() |> birl.get_day
-  #(new_model(flags, date), get_session())
+  #(new_model(flags, date.today()), get_session())
 }
 
 pub type Msg {
@@ -175,8 +144,8 @@ pub type UnauthenticatedMsg {
 
 pub type AuthenticatedMsg {
   ApiCreatedHabit(Result(Nil, HttpError))
-  ApiToggledHabit(Habit, Day, Bool, Result(Nil, HttpError))
-  ApiReturnedHabits(Day, Result(List(Habit), HttpError))
+  ApiToggledHabit(Habit, Date, Bool, Result(Nil, HttpError))
+  ApiReturnedHabits(Date, Result(List(Habit), HttpError))
   NewHabitLabelChanged(String)
   NewHabitFormSubmitted
   UserToggledHabit(Habit, Bool)
@@ -222,7 +191,7 @@ pub fn update_unauthenticated(model: Model, msg: UnauthenticatedMsg) -> Returns 
     }
     GotSessionDataFromLS(session) -> {
       #(Model(..model, auth: Authenticated(session)), effect.none())
-      |> return.then(fetch_today_habits(_, session))
+      |> return.then(fetch_habits_for_displayed_date(_, session))
     }
   }
 }
@@ -259,7 +228,7 @@ pub fn update_authenticated(
         Model(..model, new_habit_form: new_habit_form(), is_adding: False),
         effect.none(),
       )
-      |> return.then(fetch_today_habits(_, session))
+      |> return.then(fetch_habits_for_displayed_date(_, session))
     }
     ApiToggledHabit(_habit, _date, _state, _result) -> {
       #(model, effect.none())
@@ -284,7 +253,7 @@ fn on_api_returned_auth_data(
   case result {
     Ok(session) ->
       #(Model(..model, auth: Authenticated(session)), store_session(session))
-      |> return.then(fetch_today_habits(_, session))
+      |> return.then(fetch_habits_for_displayed_date(_, session))
     Error(error) -> #(
       Model(..model, notices: [Notice(http_error_to_string(error))]),
       effect.none(),
@@ -372,25 +341,18 @@ fn store_session_do(data: SessionData) -> Result(Nil, String) {
   |> result.replace_error("Unable to store session data in local storage")
 }
 
-fn fetch_today_habits(model: Model, session: SessionData) -> Returns {
-  let date = birl.now() |> birl.get_day
-  fetch_habits_for_date(model, session, date)
-}
-
-fn fetch_habits_for_date(
+fn fetch_habits_for_displayed_date(
   model: Model,
   session: SessionData,
-  date: Day,
 ) -> Returns {
-  // TODO, add date
+  let date = model.displayed_date
+
   let expect =
     lustre_http.expect_json(habits_decoder(), fn(result) {
       AuthenticatedMsg(session, ApiReturnedHabits(date, result))
     })
 
   let date_str = date_to_string(date)
-
-  // let payload = json.object([#("date", json.string("2024-12-10"))])
 
   let effect =
     api_crud_request(
@@ -637,17 +599,38 @@ fn view_new_habit_form(model: Model, _session: SessionData) {
 }
 
 fn view_pagination(model: Model) {
-  html.section([class("t-pagination px-4 pt-2 pb-1 flex justify-between")], [
-    div([], [text(date_to_string(model.displayed_date))]),
-    div([class("py-1 space-x-4")], [
-      html.a([attr.href(""), class("border px-2 py-1 cursor-pointer")], [
-        text("<"),
+  let yesterday =
+    date.add(model.displayed_date, -1, date.Days)
+    |> date.to_iso_string
+
+  let tomorrow =
+    date.add(model.displayed_date, 1, date.Days)
+    |> date.to_iso_string
+
+  let prev =
+    qs.empty()
+    |> qs.insert("date", [yesterday])
+    |> qs.default_serialize()
+
+  let next =
+    qs.empty()
+    |> qs.insert("date", [tomorrow])
+    |> qs.default_serialize()
+
+  html.section(
+    [class("t-pagination px-4 pt-2 pb-1 flex justify-between items-center")],
+    [
+      div([class("font-semibold")], [text(date_to_string(model.displayed_date))]),
+      div([class("py-1 space-x-4")], [
+        html.a([attr.href(prev), class("border px-2 py-1 cursor-pointer")], [
+          text("<"),
+        ]),
+        html.a([attr.href(next), class("border px-2 py-1 cursor-pointer")], [
+          text(">"),
+        ]),
       ]),
-      html.a([attr.href(""), class("border px-2 py-1 cursor-pointer")], [
-        text(">"),
-      ]),
-    ]),
-  ])
+    ],
+  )
 }
 
 fn view_habits(model: Model) {
@@ -672,7 +655,7 @@ fn view_habits_with_data(habit_collection: HabitCollection) {
   ])
 }
 
-fn view_habit(habit: Habit, date: Day) {
+fn view_habit(habit: Habit, date: Date) {
   let is_checked =
     habit.checks
     |> list.any(fn(check) { check.date == date })
@@ -763,10 +746,6 @@ fn api_crud_request(
   |> request.set_header("Authorization", "Bearer " <> session.access_token)
 }
 
-fn date_to_string(date: Day) -> String {
-  int.to_string(date.year)
-  <> "-"
-  <> int.to_string(date.month)
-  <> "-"
-  <> int.to_string(date.date)
+fn date_to_string(date: Date) -> String {
+  date.to_iso_string(date)
 }

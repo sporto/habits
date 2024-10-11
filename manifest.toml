@@ -15,7 +15,10 @@ packages = [
   { name = "gleeunit", version = "1.2.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "gleeunit", source = "hex", outer_checksum = "F7A7228925D3EE7D0813C922E062BFD6D7E9310F0BEE585D3A42F3307E3CFD13" },
   { name = "lustre", version = "4.5.0", build_tools = ["gleam"], requirements = ["gleam_erlang", "gleam_json", "gleam_otp", "gleam_stdlib"], otp_app = "lustre", source = "hex", outer_checksum = "15C0597E97FBC4D095B6DDFAB849740EB9062828D55A071990A957C6564ADEF3" },
   { name = "lustre_http", version = "0.5.2", build_tools = ["gleam"], requirements = ["gleam_fetch", "gleam_http", "gleam_javascript", "gleam_json", "gleam_stdlib", "lustre"], otp_app = "lustre_http", source = "hex", outer_checksum = "FB0478CBFA6B16DBE8ECA326DAE2EC15645E04900595EF2C4F039ABFA0512ABA" },
+  { name = "nibble", version = "1.1.1", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "nibble", source = "hex", outer_checksum = "67C6BEBC1AB6D771AB893B4A7B3E66C92668C6E7774C335FEFCD545B06435FE5" },
   { name = "plinth", version = "0.4.14", build_tools = ["gleam"], requirements = ["conversation", "gleam_javascript", "gleam_json", "gleam_stdlib"], otp_app = "plinth", source = "hex", outer_checksum = "1954376A2E19735B251F73B33C5D119AEB838BD589475884710B224E402F1546" },
+  { name = "qs", version = "0.6.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "qs", source = "hex", outer_checksum = "D5585CEFA34E67100FACC1A3C3931B6A310D6AA89EA4F18F63427DE712C94485" },
+  { name = "rada", version = "0.4.0", build_tools = ["gleam"], requirements = ["gleam_stdlib", "nibble"], otp_app = "rada", source = "hex", outer_checksum = "84123E98F03698EDFDC96BF4AE9F5CC97190B7490C4B76CF2052211AED557C56" },
   { name = "ranger", version = "1.2.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "ranger", source = "hex", outer_checksum = "1566C272B1D141B3BBA38B25CB761EF56E312E79EC0E2DFD4D3C19FB0CC1F98C" },
   { name = "simplifile", version = "2.2.0", build_tools = ["gleam"], requirements = ["filepath", "gleam_stdlib"], otp_app = "simplifile", source = "hex", outer_checksum = "0DFABEF7DC7A9E2FF4BB27B108034E60C81BEBFCB7AB816B9E7E18ED4503ACD8" },
   { name = "thoas", version = "1.2.1", build_tools = ["rebar3"], requirements = [], otp_app = "thoas", source = "hex", outer_checksum = "E38697EDFFD6E91BD12CEA41B155115282630075C2A727E7A6B2947F5408B86A" },
@@ -30,4 +33,6 @@ gleeunit = { version = ">= 1.0.0 and < 2.0.0" }
 lustre = { version = ">= 4.5.0 and < 5.0.0" }
 lustre_http = { version = ">= 0.5.2 and < 1.0.0" }
 plinth = { version = ">= 0.4.14 and < 1.0.0" }
+qs = { version = ">= 0.6.0 and < 1.0.0" }
+rada = { version = ">= 0.4.0 and < 1.0.0" }
 simplifile = { version = ">= 2.2.0 and < 3.0.0" }
