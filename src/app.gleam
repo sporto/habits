@@ -574,6 +574,7 @@ fn view_login_form(model: Model) {
     div([], [
       html.label([class("block")], [text("Email")]),
       html.input([
+        class("t-input-email border"),
         attr.type_("text"),
         attr.name("email"),
         attr.value(model.login_form.email),
@@ -583,6 +584,7 @@ fn view_login_form(model: Model) {
     div([], [
       html.label([class("block")], [text("Passsword")]),
       html.input([
+        class("t-input-password border"),
         attr.type_("password"),
         attr.name("password"),
         attr.value(model.login_form.password),
@@ -632,7 +634,7 @@ fn view_new_habit_form(model: Model, _session: SessionData) {
         //
         html.label([class("")], [text("New")]),
         html.input([
-          class("h-8 rounded"),
+          class("t-input-new h-8 rounded border"),
           attr.type_("text"),
           attr.name("label"),
           attr.value(model.new_habit_form.label),
