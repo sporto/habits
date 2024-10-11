@@ -282,10 +282,9 @@ fn on_api_returned_auth_data(
   result: Result(SessionData, HttpError),
 ) -> Returns {
   case result {
-    Ok(data) -> #(
-      Model(..model, auth: Authenticated(data)),
-      store_session(data),
-    )
+    Ok(session) ->
+      #(Model(..model, auth: Authenticated(session)), store_session(session))
+      |> return.then(fetch_today_habits(_, session))
     Error(error) -> #(
       Model(..model, notices: [Notice(http_error_to_string(error))]),
       effect.none(),
@@ -595,6 +594,7 @@ fn view_authenticated(
     view_header(model, session),
     //
     view_new_habit_form(model, session),
+    view_pagination(model),
     view_habits(model),
   ])
 }
@@ -607,12 +607,12 @@ fn view_header(_model: Model, session: SessionData) {
 }
 
 fn view_new_habit_form(model: Model, _session: SessionData) {
-  html.section([class("t-new-habit-form py-4")], [
+  html.section([class("t-new-habit-form px-4 pt-4 pb-1")], [
     //
     html.form(
       [
         //
-        class("flex space-x-2 p-2 items-center"),
+        class("flex space-x-2 items-center"),
         event.on_submit(NewHabitFormSubmitted),
       ],
       [
@@ -636,6 +636,20 @@ fn view_new_habit_form(model: Model, _session: SessionData) {
   ])
 }
 
+fn view_pagination(model: Model) {
+  html.section([class("t-pagination px-4 pt-2 pb-1 flex justify-between")], [
+    div([], [text(date_to_string(model.displayed_date))]),
+    div([class("py-1 space-x-4")], [
+      html.a([attr.href(""), class("border px-2 py-1 cursor-pointer")], [
+        text("<"),
+      ]),
+      html.a([attr.href(""), class("border px-2 py-1 cursor-pointer")], [
+        text(">"),
+      ]),
+    ]),
+  ])
+}
+
 fn view_habits(model: Model) {
   case model.habits {
     RemoteDataNotAsked | RemoteDataLoading ->
@@ -646,7 +660,7 @@ fn view_habits(model: Model) {
 }
 
 fn view_habits_wrapper(children) {
-  html.section([class("t-habits-wrapper p-4")], children)
+  html.section([class("t-habits-wrapper px-4 py-1")], children)
 }
 
 fn view_habits_with_data(habit_collection: HabitCollection) {
