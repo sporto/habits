@@ -1,3 +1,4 @@
+import app/components
 import birl
 import gleam/dynamic
 import gleam/http.{type Method, Get, Https, Post}
@@ -241,8 +242,13 @@ pub fn update_unauthenticated(model: Model, msg: UnauthenticatedMsg) -> Returns 
       #(model, login(model))
     }
     GotSessionDataFromLS(session) -> {
-      #(Model(..model, auth: Authenticated(session)), effect.none())
-      |> return.then(fetch_habits_for_displayed_date(_, session))
+      case check_session_is_valid(session) {
+        True -> {
+          #(Model(..model, auth: Authenticated(session)), effect.none())
+          |> return.then(fetch_habits_for_displayed_date(_, session))
+        }
+        False -> #(Model(..model, auth: Unauthenticated), effect.none())
+      }
     }
   }
 }
@@ -554,20 +560,23 @@ pub fn view(model: Model) -> element.Element(Msg) {
       view_unauthenticated(model) |> element.map(UnauthenticatedMsg)
 
     Authenticated(session) -> {
-      let now = birl.now() |> birl.to_unix
-
-      case now > session.expires_at {
+      case check_session_is_valid(session) {
         True -> {
-          io.debug("Session expired")
-          view_unauthenticated(model) |> element.map(UnauthenticatedMsg)
-        }
-        False -> {
           view_authenticated(model, session)
           |> element.map(AuthenticatedMsg(session, _))
+        }
+        False -> {
+          io.debug("Session expired")
+          view_unauthenticated(model) |> element.map(UnauthenticatedMsg)
         }
       }
     }
   }
+}
+
+fn check_session_is_valid(session: SessionData) -> Bool {
+  let now = birl.now() |> birl.to_unix
+  now < session.expires_at
 }
 
 fn view_unauthenticated(model: Model) -> Element(UnauthenticatedMsg) {
@@ -578,8 +587,8 @@ fn view_login_form(model: Model) {
   html.form([event.on_submit(ClickedLogin), class("space-y-4")], [
     div([], [
       html.label([class("block")], [text("Email")]),
-      html.input([
-        class("t-input-email h-8 rounded border"),
+      components.input([
+        class("t-input-email"),
         attr.type_("text"),
         attr.name("email"),
         attr.value(model.login_form.email),
@@ -588,8 +597,8 @@ fn view_login_form(model: Model) {
     ]),
     div([], [
       html.label([class("block")], [text("Passsword")]),
-      html.input([
-        class("t-input-password h-8 rounded border"),
+      components.input([
+        class("t-input-password"),
         attr.type_("password"),
         attr.name("password"),
         attr.value(model.login_form.password),
@@ -597,11 +606,7 @@ fn view_login_form(model: Model) {
       ]),
     ]),
     div([], [
-      html.input([
-        class("border p-2"),
-        attr.type_("submit"),
-        attr.value("Login"),
-      ]),
+      components.button_input([attr.type_("submit"), attr.value("Login")]),
     ]),
   ])
 }
@@ -638,15 +643,14 @@ fn view_new_habit_form(model: Model, _session: SessionData) {
       [
         //
         html.label([class("")], [text("New")]),
-        html.input([
-          class("t-input-new h-8 rounded border"),
+        components.input([
+          class("t-input-new"),
           attr.type_("text"),
           attr.name("label"),
           attr.value(model.new_habit_form.label),
           event.on_input(NewHabitLabelChanged),
         ]),
-        html.input([
-          class("cursor-pointer border px-2 py-1 rounded h-8"),
+        components.button_input([
           attr.type_("submit"),
           attr.value("Add"),
           attr.disabled(model.is_adding),
