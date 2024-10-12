@@ -160,10 +160,12 @@ pub type UnauthenticatedMsg {
 
 pub type AuthenticatedMsg {
   ApiCreatedHabit(Result(Nil, HttpError))
-  ApiToggledHabit(Habit, Date, Bool, Result(Nil, HttpError))
   ApiReturnedHabits(Date, Result(List(Habit), HttpError))
-  NewHabitLabelChanged(String)
+  ApiToggledHabit(Habit, Date, Bool, Result(Nil, HttpError))
+  ApiClearedHabit(Habit, Date, Result(Nil, HttpError))
   NewHabitFormSubmitted
+  NewHabitLabelChanged(String)
+  UserClearedHabit(Habit, Date)
   UserToggledHabit(Habit, Bool)
 }
 
@@ -287,6 +289,10 @@ pub fn update_authenticated(
       )
       |> return.then(fetch_habits_for_displayed_date(_, session))
     }
+    ApiClearedHabit(_habit, _date, _result) -> {
+      #(model, effect.none())
+      |> return.then(fetch_habits_for_displayed_date(_, session))
+    }
     ApiToggledHabit(_habit, _date, _state, _result) -> {
       #(model, effect.none())
     }
@@ -296,6 +302,9 @@ pub fn update_authenticated(
     )
     NewHabitFormSubmitted -> {
       #(Model(..model, is_adding: True), create_habit(model, session))
+    }
+    UserClearedHabit(habit, date) -> {
+      #(model, clear_habit(model, session, habit, date))
     }
     UserToggledHabit(habit, state) -> {
       #(model, toggle_check(model, session, habit, state))
@@ -497,6 +506,32 @@ fn toggle_check(
   |> effect.map(AuthenticatedMsg(session, _))
 }
 
+fn clear_habit(model: Model, session: SessionData, habit: Habit, date: Date) {
+  let message = ApiClearedHabit(habit, date, _)
+  let expect = lustre_http.expect_anything(message)
+  let date_str = date_to_string(date)
+
+  let payload =
+    json.object([
+      //
+      #("stopped_at", json.string(date_str)),
+    ])
+
+  let request =
+    api_crud_request(
+      flags: model.flags,
+      method: http.Patch,
+      path: "/habits",
+      payload: Some(payload),
+      query: [#("id", "eq." <> habit.id)],
+      session:,
+    )
+
+  request
+  |> lustre_http.send(expect)
+  |> effect.map(AuthenticatedMsg(session, _))
+}
+
 /// Decoders
 pub fn flags_decoder() {
   dynamic.decode2(
@@ -555,6 +590,8 @@ pub fn session_user_encode(user: User) {
 
 /// Views
 pub fn view(model: Model) -> element.Element(Msg) {
+  let today = date.today()
+
   case model.auth {
     Unauthenticated ->
       view_unauthenticated(model) |> element.map(UnauthenticatedMsg)
@@ -562,7 +599,7 @@ pub fn view(model: Model) -> element.Element(Msg) {
     Authenticated(session) -> {
       case check_session_is_valid(session) {
         True -> {
-          view_authenticated(model, session)
+          view_authenticated(model, session, today)
           |> element.map(AuthenticatedMsg(session, _))
         }
         False -> {
@@ -614,13 +651,14 @@ fn view_login_form(model: Model) {
 fn view_authenticated(
   model: Model,
   session: SessionData,
+  today: Date,
 ) -> Element(AuthenticatedMsg) {
   html.main([], [
     view_header(model, session),
     //
     view_new_habit_form(model, session),
-    view_pagination(model),
-    view_habits(model),
+    view_pagination(model, today),
+    view_habits(model, today),
   ])
 }
 
@@ -668,9 +706,7 @@ fn date_to_query_string(date: Date) -> String {
   |> qs.default_serialize()
 }
 
-fn view_pagination(model: Model) {
-  let today = date.today()
-
+fn view_pagination(model: Model, today: Date) {
   let yesterday = date.add(model.displayed_date, -1, date.Days)
 
   let tomorrow = date.add(model.displayed_date, 1, date.Days)
@@ -696,11 +732,11 @@ fn view_pagination(model: Model) {
   )
 }
 
-fn view_habits(model: Model) {
+fn view_habits(model: Model, today: Date) {
   case model.habits {
     RemoteDataNotAsked | RemoteDataLoading ->
       view_habits_wrapper([text("Loading habits...")])
-    RemoteDataSuccess(habits) -> view_habits_with_data(habits)
+    RemoteDataSuccess(habits) -> view_habits_with_data(habits, today)
     RemoteDataFailure(error) -> text(error)
   }
 }
@@ -709,30 +745,46 @@ fn view_habits_wrapper(children) {
   html.section([class("t-habits-wrapper px-4 py-1")], children)
 }
 
-fn view_habits_with_data(habit_collection: HabitCollection) {
+fn view_habits_with_data(habit_collection: HabitCollection, today: Date) {
   view_habits_wrapper([
     html.ul(
       [class("t-habits-list")],
-      list.map(habit_collection.items, view_habit(_, habit_collection.date)),
+      list.map(habit_collection.items, view_habit(
+        _,
+        habit_collection.date,
+        today,
+      )),
     ),
   ])
 }
 
-fn view_habit(habit: Habit, date: Date) {
+fn view_habit(habit: Habit, date: Date, today: Date) {
   let is_checked =
     habit.checks
     |> list.any(fn(check) { check.date == date })
 
+  let btn_clear = case date == today {
+    True -> {
+      components.button([event.on_click(UserClearedHabit(habit, date))], [
+        components.icon_clear(),
+      ])
+    }
+    False -> {
+      text("")
+    }
+  }
+
   html.li([class("t-habit py-1")], [
-    html.label([class("space-x-2")], [
-      html.span([], [
+    html.label([class("space-x-2 flex items-center")], [
+      html.div([], [
         html.input([
           attr.type_("checkbox"),
           attr.checked(is_checked),
           event.on_check(UserToggledHabit(habit, _)),
         ]),
       ]),
-      html.span([], [text(habit.label)]),
+      html.div([], [text(habit.label)]),
+      btn_clear,
     ]),
   ])
 }

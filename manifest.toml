@@ -13,6 +13,7 @@ packages = [
   { name = "gleam_otp", version = "0.12.1", build_tools = ["gleam"], requirements = ["gleam_erlang", "gleam_stdlib"], otp_app = "gleam_otp", source = "hex", outer_checksum = "BFACC1513410DF5A1617169A9CD7EA334973AC71D860A17574BA7B2EADD89A6F" },
   { name = "gleam_stdlib", version = "0.40.0", build_tools = ["gleam"], requirements = [], otp_app = "gleam_stdlib", source = "hex", outer_checksum = "86606B75A600BBD05E539EB59FABC6E307EEEA7B1E5865AFB6D980A93BCB2181" },
   { name = "gleeunit", version = "1.2.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "gleeunit", source = "hex", outer_checksum = "F7A7228925D3EE7D0813C922E062BFD6D7E9310F0BEE585D3A42F3307E3CFD13" },
+  { name = "gleroglero", version = "1.1.0", build_tools = ["gleam"], requirements = ["gleam_stdlib", "lustre"], otp_app = "gleroglero", source = "hex", outer_checksum = "D265C3629521E2E8B994BE2FD6EE9CCB287DF0D301D0E72AC3EF2F6EB9DEBD89" },
   { name = "lustre", version = "4.5.0", build_tools = ["gleam"], requirements = ["gleam_erlang", "gleam_json", "gleam_otp", "gleam_stdlib"], otp_app = "lustre", source = "hex", outer_checksum = "15C0597E97FBC4D095B6DDFAB849740EB9062828D55A071990A957C6564ADEF3" },
   { name = "lustre_http", version = "0.5.2", build_tools = ["gleam"], requirements = ["gleam_fetch", "gleam_http", "gleam_javascript", "gleam_json", "gleam_stdlib", "lustre"], otp_app = "lustre_http", source = "hex", outer_checksum = "FB0478CBFA6B16DBE8ECA326DAE2EC15645E04900595EF2C4F039ABFA0512ABA" },
   { name = "modem", version = "2.0.1", build_tools = ["gleam"], requirements = ["gleam_stdlib", "lustre"], otp_app = "modem", source = "hex", outer_checksum = "B446119A85DC9C31FEA0DCB204072E40356CB246C9D091CBBF2E4678CDB05A2D" },
@@ -31,6 +32,7 @@ gleam_http = { version = ">= 3.7.0 and < 4.0.0" }
 gleam_json = { version = ">= 1.0.1 and < 2.0.0" }
 gleam_stdlib = { version = ">= 0.34.0 and < 2.0.0" }
 gleeunit = { version = ">= 1.0.0 and < 2.0.0" }
+gleroglero = { version = ">= 1.1.0 and < 2.0.0" }
 lustre = { version = ">= 4.5.0 and < 5.0.0" }
 lustre_http = { version = ">= 0.5.2 and < 1.0.0" }
 modem = { version = ">= 2.0.1 and < 3.0.0" }
