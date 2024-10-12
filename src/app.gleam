@@ -90,7 +90,13 @@ pub type HabitCollection {
 }
 
 pub type Habit {
-  Habit(id: String, label: String, checks: List(Check))
+  Habit(
+    id: String,
+    label: String,
+    started_at: Date,
+    stopped_at: Option(Date),
+    checks: List(Check),
+  )
 }
 
 pub type Check {
@@ -100,10 +106,12 @@ pub type Check {
 // pub type CheckCollection
 
 fn habit_decoder() -> dynamic.Decoder(Habit) {
-  dynamic.decode3(
+  dynamic.decode5(
     Habit,
     dynamic.field("id", dynamic.string),
     dynamic.field("label", dynamic.string),
+    dynamic.field("started_at", date_decoder),
+    dynamic.field("stopped_at", dynamic.optional(date_decoder)),
     dynamic.field("checks", dynamic.list(check_decoder())),
   )
 }
@@ -763,15 +771,23 @@ fn view_habit(habit: Habit, date: Date, today: Date) {
     habit.checks
     |> list.any(fn(check) { check.date == date })
 
-  let btn_clear = case date == today {
+  let is_habit_for_today = date == today
+  let is_habit_stopped = habit.stopped_at == Some(date)
+
+  let btn_clear = case is_habit_for_today && !is_habit_stopped {
     True -> {
       components.button([event.on_click(UserClearedHabit(habit, date))], [
-        components.icon_clear(),
+        components.icon_clear([]),
       ])
     }
     False -> {
       text("")
     }
+  }
+
+  let stopped = case is_habit_for_today && is_habit_stopped {
+    True -> components.icon_check([class("text-slate-300")])
+    False -> text("")
   }
 
   html.li([class("t-habit py-1")], [
@@ -785,6 +801,7 @@ fn view_habit(habit: Habit, date: Date, today: Date) {
       ]),
       html.div([], [text(habit.label)]),
       btn_clear,
+      stopped,
     ]),
   ])
 }
