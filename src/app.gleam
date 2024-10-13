@@ -8,6 +8,7 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result.{try}
+import gleam/string
 import gleam/uri.{type Uri}
 import lib/return
 import lustre
@@ -796,15 +797,17 @@ fn view_habits_wrapper(children) {
 }
 
 fn view_habits_with_data(habit_collection: HabitCollection, today: Date) {
+  let sorted =
+    habit_collection.items
+    |> list.sort(by: fn(a, b) {
+      string.compare(a.label |> string.lowercase, b.label |> string.lowercase)
+    })
+
   view_habits_wrapper([
     html.table([class("t-habits-list w-full")], [
       html.tbody(
         [],
-        list.map(habit_collection.items, view_habit(
-          _,
-          habit_collection.date,
-          today,
-        )),
+        list.map(sorted, view_habit(_, habit_collection.date, today)),
       ),
     ]),
   ])
