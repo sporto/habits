@@ -32,6 +32,7 @@ pub type Flags {
 pub type Model {
   Model(
     auth: Auth,
+    categories: RemoteData(CategoryCollection),
     displayed_date: Date,
     flags: Flags,
     habits: RemoteData(HabitCollection),
@@ -48,6 +49,7 @@ pub type Model {
 fn new_model(flags: Flags, date: Date) -> Model {
   Model(
     auth: Unauthenticated,
+    categories: RemoteDataNotAsked,
     displayed_date: date,
     flags:,
     habits: RemoteDataNotAsked,
@@ -106,6 +108,14 @@ pub type Notice {
   Notice(message: String)
 }
 
+pub type CategoryCollection {
+  CategoryCollection(items: List(Category))
+}
+
+pub type Category {
+  Category(id: String, label: String)
+}
+
 pub type HabitCollection {
   HabitCollection(date: Date, items: List(Habit))
 }
@@ -124,7 +134,17 @@ pub type Check {
   Check(date: Date)
 }
 
-// pub type CheckCollection
+fn category_decoder() -> dynamic.Decoder(Category) {
+  dynamic.decode2(
+    Category,
+    dynamic.field("id", dynamic.string),
+    dynamic.field("label", dynamic.string),
+  )
+}
+
+fn categories_decoder() -> dynamic.Decoder(List(Category)) {
+  dynamic.list(category_decoder())
+}
 
 fn habit_decoder() -> dynamic.Decoder(Habit) {
   dynamic.decode5(
@@ -193,6 +213,7 @@ pub type AuthenticatedMsg {
   ApiArchivedHabit(Habit, Date, Result(Nil, HttpError))
   ApiDeletedHabit(Habit, Result(Nil, HttpError))
   ApiReturnedHabits(Date, Result(List(Habit), HttpError))
+  ApiReturnedCategories(Result(List(Category), HttpError))
   ApiToggledHabit(Habit, Date, Bool, Result(Nil, HttpError))
   ApiUnarchivedHabit(Habit, Result(Nil, HttpError))
   NewHabitFormSubmitted
@@ -228,7 +249,7 @@ pub fn update(model: Model, msg: Msg) -> Returns {
       case get_date_from_uri(uri) {
         Ok(date) -> {
           #(Model(..model, displayed_date: date), effect.none())
-          |> return.then(do_if_authenticated(_, fetch_habits_for_displayed_date))
+          |> return.then(do_if_authenticated(_, fetch_data_for_displayed_date))
         }
         Error(_) -> #(model, effect.none())
       }
@@ -286,7 +307,7 @@ pub fn update_unauthenticated(model: Model, msg: UnauthenticatedMsg) -> Returns 
       case check_session_is_valid(session) {
         True -> {
           #(Model(..model, auth: Authenticated(session)), effect.none())
-          |> return.then(fetch_habits_for_displayed_date(_, session))
+          |> return.then(fetch_data_for_displayed_date(_, session))
         }
         False -> #(Model(..model, auth: Unauthenticated), effect.none())
       }
@@ -321,28 +342,49 @@ pub fn update_authenticated(
         }
       }
     }
+    ApiReturnedCategories(result) -> {
+      case result {
+        Ok(categories) -> {
+          let collection = CategoryCollection(categories)
+          #(
+            Model(..model, categories: RemoteDataSuccess(collection)),
+            effect.none(),
+          )
+        }
+        Error(error) -> {
+          io.debug(error)
+          #(
+            Model(
+              ..model,
+              habits: RemoteDataFailure(http_error_to_string(error)),
+            ),
+            effect.none(),
+          )
+        }
+      }
+    }
     ApiCreatedCategory(_result) -> {
       #(Model(..model, new_category_form: new_category_form()), effect.none())
-      |> return.then(fetch_habits_for_displayed_date(_, session))
+      |> return.then(fetch_data_for_displayed_date(_, session))
     }
     ApiCreatedHabit(_result) -> {
       #(
         Model(..model, new_habit_form: new_habit_form(), is_adding: False),
         effect.none(),
       )
-      |> return.then(fetch_habits_for_displayed_date(_, session))
+      |> return.then(fetch_data_for_displayed_date(_, session))
     }
     ApiArchivedHabit(_habit, _date, _result) -> {
       #(model, effect.none())
-      |> return.then(fetch_habits_for_displayed_date(_, session))
+      |> return.then(fetch_data_for_displayed_date(_, session))
     }
     ApiDeletedHabit(_habit, _result) -> {
       #(model, effect.none())
-      |> return.then(fetch_habits_for_displayed_date(_, session))
+      |> return.then(fetch_data_for_displayed_date(_, session))
     }
     ApiUnarchivedHabit(_habit, _result) -> {
       #(model, effect.none())
-      |> return.then(fetch_habits_for_displayed_date(_, session))
+      |> return.then(fetch_data_for_displayed_date(_, session))
     }
     ApiToggledHabit(_habit, _date, _state, _result) -> {
       #(model, effect.none())
@@ -394,7 +436,7 @@ fn on_api_returned_auth_data(
   case result {
     Ok(session) ->
       #(Model(..model, auth: Authenticated(session)), store_session(session))
-      |> return.then(fetch_habits_for_displayed_date(_, session))
+      |> return.then(fetch_data_for_displayed_date(_, session))
     Error(error) -> #(
       Model(..model, notices: [Notice(http_error_to_string(error))]),
       effect.none(),
@@ -480,6 +522,31 @@ fn store_session_do(data: SessionData) -> Result(Nil, String) {
 
   storage.set_item(local_storage, "session", json_string)
   |> result.replace_error("Unable to store session data in local storage")
+}
+
+fn fetch_data_for_displayed_date(model: Model, session: SessionData) -> Returns {
+  fetch_categories(model, session)
+  |> return.then(fetch_habits_for_displayed_date(_, session))
+}
+
+fn fetch_categories(model: Model, session: SessionData) -> Returns {
+  let expect =
+    lustre_http.expect_json(categories_decoder(), fn(result) {
+      AuthenticatedMsg(session, ApiReturnedCategories(result))
+    })
+
+  let effect =
+    api_crud_request(
+      flags: model.flags,
+      method: Get,
+      path: "/categories",
+      payload: None,
+      query: [],
+      session:,
+    )
+    |> lustre_http.send(expect)
+
+  #(Model(..model, categories: RemoteDataLoading), effect)
 }
 
 fn fetch_habits_for_displayed_date(
