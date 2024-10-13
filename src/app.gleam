@@ -730,7 +730,9 @@ fn view_login_form(model: Model) {
       ]),
     ]),
     div([], [
-      components.button_input([attr.type_("submit"), attr.value("Login")]),
+      buttons.new(buttons.ActionSubmit)
+      |> buttons.with_label("Login")
+      |> buttons.view,
     ]),
   ])
 }
@@ -757,7 +759,7 @@ fn view_maybe_modal(model: Model) {
   }
 }
 
-fn view_modal_delete_habit(model: Model, habit: Habit) {
+fn view_modal_delete_habit(_model: Model, habit: Habit) {
   components.modal([
     html.p([class("pb-2")], [
       text("Completely delete this habit? There is no undo."),
@@ -839,13 +841,20 @@ fn view_pagination(model: Model, today: Date) {
         text(date_to_string(model.displayed_date)),
       ]),
       div([class("py-1 space-x-4 flex items-center")], [
-        components.button_link([attr.href(today)], [text("Today")]),
-        components.button_link([attr.href(prev)], [
-          components.icon_chevron_left([]),
-        ]),
-        components.button_link([attr.href(next)], [
-          components.icon_chevron_right([]),
-        ]),
+        buttons.new(buttons.ActionLink(today))
+          |> buttons.with_label("Today")
+          |> buttons.with_variant(buttons.VariantOutlined)
+          |> buttons.view,
+        //
+        buttons.new(buttons.ActionLink(prev))
+          |> buttons.with_icon_left(icons.ChevronLeft)
+          |> buttons.with_variant(buttons.VariantOutlined)
+          |> buttons.view,
+        //
+        buttons.new(buttons.ActionLink(next))
+          |> buttons.with_icon_left(icons.ChevronRight)
+          |> buttons.with_variant(buttons.VariantOutlined)
+          |> buttons.view,
       ]),
     ],
   )
@@ -889,14 +898,15 @@ fn view_habit(habit: Habit, date: Date, today: Date) {
   let is_habit_for_today = date == today
   let is_habit_stopped = habit.stopped_at == Some(date)
 
-  let icon_button_classes = class("px-4 py-1")
+  let icon_button_classes = class("px-2")
 
   let btn_archive = case is_habit_for_today && !is_habit_stopped {
     True -> {
-      components.button_only(
-        [icon_button_classes, event.on_click(UserArchivedHabit(habit, date))],
-        [components.icon_archive([])],
-      )
+      buttons.new(buttons.ActionClick(UserArchivedHabit(habit, date)))
+      |> buttons.with_icon_left(icons.Archive)
+      |> buttons.with_variant(buttons.VariantUnfilled)
+      |> buttons.with_attrs([icon_button_classes])
+      |> buttons.view
     }
     False -> {
       text("")
@@ -905,18 +915,22 @@ fn view_habit(habit: Habit, date: Date, today: Date) {
 
   let btn_unarchive = case is_habit_stopped {
     True ->
-      components.button_only(
-        [icon_button_classes, event.on_click(UserUnarchivedHabit(habit))],
-        [components.icon_unarchive([class("text-slate-500")])],
-      )
+      buttons.new(buttons.ActionClick(UserUnarchivedHabit(habit)))
+      |> buttons.with_icon_left(icons.Unarchive)
+      |> buttons.with_variant(buttons.VariantUnfilled)
+      |> buttons.with_attrs([class("text-slate-500")])
+      |> buttons.with_attrs([icon_button_classes])
+      |> buttons.view
+
     False -> text("")
   }
 
   let btn_delete =
-    components.button_only(
-      [icon_button_classes, event.on_click(UserDeletedHabit(habit))],
-      [components.icon_trash([])],
-    )
+    buttons.new(buttons.ActionClick(UserDeletedHabit(habit)))
+    |> buttons.with_icon_left(icons.Trash)
+    |> buttons.with_variant(buttons.VariantUnfilled)
+    |> buttons.with_attrs([icon_button_classes])
+    |> buttons.view
 
   html.tr([class("t-habit")], [
     html.td([class("py-2")], [

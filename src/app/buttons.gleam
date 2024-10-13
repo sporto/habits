@@ -18,6 +18,7 @@ pub type Variant {
   VariantDanger
   VariantSecondary
   VariantOutlined
+  VariantUnfilled
 }
 
 pub type Config(msg) {
@@ -115,7 +116,7 @@ const classes_button_primary = "bg-blue-700 hover:bg-blue-800 focus:ring-blue-30
 
 const classes_button_secondary = "bg-gray-700 hover:bg-gray-800 focus:ring-gray-300 text-white"
 
-const classes_button_outlined_base = "focus:ring-gray-300"
+const classes_button_outlined_base = "focus:ring-gray-300 border border-slate-500"
 
 const classes_button_outlined_inactive = "text-gray600"
 
@@ -134,10 +135,11 @@ fn classes_for_variant(variant: Variant) -> Classes {
     VariantSecondary -> Classes(classes_button_secondary, "", "")
     VariantOutlined ->
       Classes(
-        base: "focus:ring-gray-300",
-        active: "bg-gray-700 text-white",
-        inactive: "text-gray600",
+        base: classes_button_outlined_base,
+        active: classes_button_outlined_active,
+        inactive: classes_button_outlined_inactive,
       )
+    VariantUnfilled -> Classes("", "", "")
   }
 }
 
