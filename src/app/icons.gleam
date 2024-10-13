@@ -23,5 +23,5 @@ pub fn icon(icon icon: Icon) {
     Unarchive -> mini.archive_box_x_mark()
   }
 
-  html.span([class("h-4 w-4 block")], [svg])
+  html.span([class("h-6 w-6 block")], [svg])
 }

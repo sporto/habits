@@ -14,7 +14,7 @@ import gleam/string
 import gleam/uri.{type Uri}
 import lib/return
 import lustre
-import lustre/attribute.{class} as attr
+import lustre/attribute.{class, style} as attr
 import lustre/effect
 import lustre/element.{type Element}
 import lustre/element/html.{div, text}
@@ -847,11 +847,13 @@ fn view_pagination(model: Model, today: Date) {
           |> buttons.view,
         //
         buttons.new(buttons.ActionLink(prev))
+          |> buttons.with_attrs([class("t-btn-prev px-1")])
           |> buttons.with_icon_left(icons.ChevronLeft)
           |> buttons.with_variant(buttons.VariantOutlined)
           |> buttons.view,
         //
         buttons.new(buttons.ActionLink(next))
+          |> buttons.with_attrs([class("t-btn-next px-1")])
           |> buttons.with_icon_left(icons.ChevronRight)
           |> buttons.with_variant(buttons.VariantOutlined)
           |> buttons.view,
@@ -881,7 +883,7 @@ fn view_habits_with_data(habit_collection: HabitCollection, today: Date) {
     })
 
   view_habits_wrapper([
-    html.table([class("t-habits-list w-full")], [
+    html.table([class("t-habits-list w-full table-fixed")], [
       html.tbody(
         [],
         list.map(sorted, view_habit(_, habit_collection.date, today)),
@@ -943,10 +945,10 @@ fn view_habit(habit: Habit, date: Date, today: Date) {
             event.on_check(UserToggledHabit(habit, _)),
           ]),
         ]),
-        html.div([class("truncate w-60")], [text(habit.label)]),
+        html.div([class("truncate")], [text(habit.label)]),
       ]),
     ]),
-    html.td([], [
+    html.td([style([#("width", "8rem")])], [
       div([class("flex items-center justify-end")], [
         btn_archive,
         btn_unarchive,
