@@ -1,4 +1,6 @@
+import app/buttons
 import app/components
+import app/icons
 import birl
 import gleam/dynamic
 import gleam/http.{type Method, Get, Https, Post}
@@ -31,11 +33,11 @@ pub type Model {
   Model(
     auth: Auth,
     displayed_date: Date,
-    // checks: RemoteData(List(Check)),
     flags: Flags,
     habits: RemoteData(HabitCollection),
     is_adding: Bool,
     login_form: LoginForm,
+    modal: Modal,
     new_habit_form: NewHabitForm,
     notices: List(Notice),
   )
@@ -49,9 +51,15 @@ fn new_model(flags: Flags, date: Date) -> Model {
     habits: RemoteDataNotAsked,
     is_adding: False,
     login_form: new_login_form(),
+    modal: ModalNone,
     new_habit_form: new_habit_form(),
     notices: [],
   )
+}
+
+pub type Modal {
+  ModalNone
+  ModalDeleteHabit(Habit)
 }
 
 pub type RemoteData(data) {
@@ -169,15 +177,19 @@ pub type UnauthenticatedMsg {
 
 pub type AuthenticatedMsg {
   ApiCreatedHabit(Result(Nil, HttpError))
+  ApiArchivedHabit(Habit, Date, Result(Nil, HttpError))
+  ApiDeletedHabit(Habit, Result(Nil, HttpError))
   ApiReturnedHabits(Date, Result(List(Habit), HttpError))
   ApiToggledHabit(Habit, Date, Bool, Result(Nil, HttpError))
-  ApiArchivedHabit(Habit, Date, Result(Nil, HttpError))
   ApiUnarchivedHabit(Habit, Result(Nil, HttpError))
   NewHabitFormSubmitted
   NewHabitLabelChanged(String)
   UserArchivedHabit(Habit, Date)
-  UserUnarchivedHabit(Habit)
+  UserDeletedHabit(Habit)
+  UserDeletedHabitCancelled
+  UserDeletedHabitCommitted(Habit)
   UserToggledHabit(Habit, Bool)
+  UserUnarchivedHabit(Habit)
 }
 
 type Returns =
@@ -304,6 +316,10 @@ pub fn update_authenticated(
       #(model, effect.none())
       |> return.then(fetch_habits_for_displayed_date(_, session))
     }
+    ApiDeletedHabit(_habit, _result) -> {
+      #(model, effect.none())
+      |> return.then(fetch_habits_for_displayed_date(_, session))
+    }
     ApiUnarchivedHabit(_habit, _result) -> {
       #(model, effect.none())
       |> return.then(fetch_habits_for_displayed_date(_, session))
@@ -320,6 +336,15 @@ pub fn update_authenticated(
     }
     UserArchivedHabit(habit, date) -> {
       #(model, archive_habit(model, session, habit, date))
+    }
+    UserDeletedHabit(habit) -> {
+      #(Model(..model, modal: ModalDeleteHabit(habit)), effect.none())
+    }
+    UserDeletedHabitCancelled -> {
+      #(Model(..model, modal: ModalNone), effect.none())
+    }
+    UserDeletedHabitCommitted(habit) -> {
+      #(Model(..model, modal: ModalNone), delete_habit(model, session, habit))
     }
     UserUnarchivedHabit(habit) -> {
       #(model, unarchive_habit(model, session, habit))
@@ -473,6 +498,25 @@ fn create_habit(model: Model, session: SessionData) -> effect.Effect(Msg) {
     path: "/habits",
     payload: Some(payload),
     query: [],
+    session:,
+  )
+  |> lustre_http.send(expect)
+  |> effect.map(AuthenticatedMsg(session, _))
+}
+
+fn delete_habit(
+  model: Model,
+  session: SessionData,
+  habit: Habit,
+) -> effect.Effect(Msg) {
+  let expect = lustre_http.expect_anything(ApiDeletedHabit(habit, _))
+
+  api_crud_request(
+    flags: model.flags,
+    method: http.Delete,
+    path: "/habits",
+    payload: None,
+    query: [#("id", "eq." <> habit.id)],
     session:,
   )
   |> lustre_http.send(expect)
@@ -702,6 +746,31 @@ fn view_authenticated(
     view_pagination(model, today),
     view_new_habit_form(model, session),
     view_habits(model, today),
+    view_maybe_modal(model),
+  ])
+}
+
+fn view_maybe_modal(model: Model) {
+  case model.modal {
+    ModalNone -> element.none()
+    ModalDeleteHabit(habit) -> view_modal_delete_habit(model, habit)
+  }
+}
+
+fn view_modal_delete_habit(model: Model, habit: Habit) {
+  components.modal([
+    html.p([class("pb-2")], [
+      text("Completely delete this habit? There is no undo."),
+    ]),
+    html.div([class("py-2 space-x-3 text-right")], [
+      buttons.new(buttons.ActionClick(UserDeletedHabitCancelled))
+        |> buttons.with_label("Cancel")
+        |> buttons.view,
+      buttons.new(buttons.ActionClick(UserDeletedHabitCommitted(habit)))
+        |> buttons.with_label("Delete")
+        |> buttons.with_variant(buttons.VariantDanger)
+        |> buttons.view,
+    ]),
   ])
 }
 
@@ -731,11 +800,10 @@ fn view_new_habit_form(model: Model, _session: SessionData) {
           attr.value(model.new_habit_form.label),
           event.on_input(NewHabitLabelChanged),
         ]),
-        components.button_input([
-          attr.type_("submit"),
-          attr.value("Add"),
-          attr.disabled(model.is_adding),
-        ]),
+        buttons.new(buttons.ActionSubmit)
+          |> buttons.with_label("Add")
+          |> buttons.with_is_disabled(model.is_adding)
+          |> buttons.view,
       ],
     ),
   ])
@@ -821,10 +889,12 @@ fn view_habit(habit: Habit, date: Date, today: Date) {
   let is_habit_for_today = date == today
   let is_habit_stopped = habit.stopped_at == Some(date)
 
+  let icon_button_classes = class("px-4 py-1")
+
   let btn_archive = case is_habit_for_today && !is_habit_stopped {
     True -> {
-      components.button(
-        [class("p-2"), event.on_click(UserArchivedHabit(habit, date))],
+      components.button_only(
+        [icon_button_classes, event.on_click(UserArchivedHabit(habit, date))],
         [components.icon_archive([])],
       )
     }
@@ -833,14 +903,20 @@ fn view_habit(habit: Habit, date: Date, today: Date) {
     }
   }
 
-  let stopped = case is_habit_stopped {
+  let btn_unarchive = case is_habit_stopped {
     True ->
-      components.button(
-        [class("p-2"), event.on_click(UserUnarchivedHabit(habit))],
+      components.button_only(
+        [icon_button_classes, event.on_click(UserUnarchivedHabit(habit))],
         [components.icon_unarchive([class("text-slate-500")])],
       )
     False -> text("")
   }
+
+  let btn_delete =
+    components.button_only(
+      [icon_button_classes, event.on_click(UserDeletedHabit(habit))],
+      [components.icon_trash([])],
+    )
 
   html.tr([class("t-habit")], [
     html.td([class("py-2")], [
@@ -853,10 +929,16 @@ fn view_habit(habit: Habit, date: Date, today: Date) {
             event.on_check(UserToggledHabit(habit, _)),
           ]),
         ]),
-        html.div([], [text(habit.label)]),
+        html.div([class("truncate w-60")], [text(habit.label)]),
       ]),
     ]),
-    html.td([class("text-right")], [btn_archive, stopped]),
+    html.td([], [
+      div([class("flex items-center justify-end")], [
+        btn_archive,
+        btn_unarchive,
+        btn_delete,
+      ]),
+    ]),
   ])
 }
 

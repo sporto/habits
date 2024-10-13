@@ -1,3 +1,4 @@
+import gleroglero/outline
 import gleroglero/solid
 import lustre/attribute.{class} as attr
 import lustre/element/html.{div, span, text}
@@ -26,8 +27,12 @@ pub fn icon_chevron_right(attrs) {
   icon_wrapper(attrs, solid.chevron_right())
 }
 
+pub fn icon_trash(attrs) {
+  icon_wrapper(attrs, solid.trash())
+}
+
 pub fn icon_unarchive(attrs) {
-  icon_wrapper(attrs, solid.archive_box_x_mark())
+  icon_wrapper(attrs, outline.archive_box_x_mark())
 }
 
 pub fn input(attrs) {
@@ -54,5 +59,37 @@ pub fn button_link(attrs, children) {
 }
 
 pub fn button(attrs, children) {
+  button_only(
+    [
+      class(
+        "px-3 border border-slate-400 rounded h-12 inline-flex items-center",
+      ),
+      ..attrs
+    ],
+    children,
+  )
+}
+
+pub fn button_only(attrs, children) {
   html.button([class("t-button"), ..attrs], children)
+}
+
+pub fn modal(children) {
+  html.div(
+    [
+      class(
+        "t-modal-backdrop fixed top-0 bottom-0 left-0 right-0 bg-slate-900/60 px-4",
+      ),
+    ],
+    [
+      html.dialog(
+        [
+          class("t-modal bg-white rounded p-4"),
+          attr.style([#("margin-top", "12rem")]),
+          attr.open(True),
+        ],
+        children,
+      ),
+    ],
+  )
 }
