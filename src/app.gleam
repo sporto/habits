@@ -664,8 +664,8 @@ fn view_authenticated(
   html.main([], [
     view_header(model, session),
     //
-    view_new_habit_form(model, session),
     view_pagination(model, today),
+    view_new_habit_form(model, session),
     view_habits(model, today),
   ])
 }
@@ -678,7 +678,7 @@ fn view_header(_model: Model, session: SessionData) {
 }
 
 fn view_new_habit_form(model: Model, _session: SessionData) {
-  html.section([class("t-new-habit-form px-4 pt-4 pb-1")], [
+  html.section([class("t-new-habit-form px-4 py-3 bg-slate-100")], [
     //
     html.form(
       [
@@ -726,15 +726,23 @@ fn view_pagination(model: Model, today: Date) {
   let next = date_to_query_string(tomorrow)
 
   html.section(
-    [class("t-pagination px-4 pt-2 pb-2 flex justify-between items-center")],
+    [
+      class(
+        "t-pagination px-4 py-4 flex justify-between items-center bg-slate-200",
+      ),
+    ],
     [
       div([class("font-semibold text-2xl")], [
         text(date_to_string(model.displayed_date)),
       ]),
-      div([class("py-1 space-x-4")], [
-        html.a([attr.href(today), class("px-2 py-1 underline")], [text("Today")]),
-        html.a([attr.href(prev), class("border px-2 py-1")], [text("<")]),
-        html.a([attr.href(next), class("border px-2 py-1")], [text(">")]),
+      div([class("py-1 space-x-4 flex items-center")], [
+        components.button_link([attr.href(today)], [text("Today")]),
+        components.button_link([attr.href(prev)], [
+          components.icon_chevron_left([]),
+        ]),
+        components.button_link([attr.href(next)], [
+          components.icon_chevron_right([]),
+        ]),
       ]),
     ],
   )
@@ -750,7 +758,7 @@ fn view_habits(model: Model, today: Date) {
 }
 
 fn view_habits_wrapper(children) {
-  html.section([class("t-habits-wrapper px-4 py-1")], children)
+  html.section([class("t-habits-wrapper px-4 py-4")], children)
 }
 
 fn view_habits_with_data(habit_collection: HabitCollection, today: Date) {
@@ -790,10 +798,11 @@ fn view_habit(habit: Habit, date: Date, today: Date) {
     False -> text("")
   }
 
-  html.li([class("t-habit py-1")], [
-    html.label([class("space-x-2 flex items-center")], [
+  html.li([class("t-habit py-2")], [
+    html.label([class("space-x-2 flex items-center text-lg")], [
       html.div([], [
         html.input([
+          class("h-5 w-5"),
           attr.type_("checkbox"),
           attr.checked(is_checked),
           event.on_check(UserToggledHabit(habit, _)),
