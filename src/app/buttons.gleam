@@ -114,7 +114,7 @@ const classes_button_base = "focus:ring-4 font-medium py-2.5 h-12 rounded-sm tex
 
 const classes_button_primary = "bg-blue-700 hover:bg-blue-800 focus:ring-blue-300 text-white"
 
-const classes_button_secondary = "bg-gray-700 hover:bg-gray-800 focus:ring-gray-300 text-white"
+const classes_button_secondary = "bg-slate-600 hover:bg-slate-800 focus:ring-slate-300 text-white"
 
 const classes_button_outlined_base = "focus:ring-gray-300 border border-slate-500"
 

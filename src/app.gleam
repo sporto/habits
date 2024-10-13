@@ -39,7 +39,9 @@ pub type Model {
     login_form: LoginForm,
     modal: Modal,
     new_habit_form: NewHabitForm,
+    new_category_form: NewCategoryForm,
     notices: List(Notice),
+    show_expanded_actions: Bool,
   )
 }
 
@@ -52,8 +54,10 @@ fn new_model(flags: Flags, date: Date) -> Model {
     is_adding: False,
     login_form: new_login_form(),
     modal: ModalNone,
+    new_category_form: new_category_form(),
     new_habit_form: new_habit_form(),
     notices: [],
+    show_expanded_actions: False,
   )
 }
 
@@ -88,6 +92,14 @@ pub type NewHabitForm {
 
 fn new_habit_form() -> NewHabitForm {
   NewHabitForm(label: "")
+}
+
+pub type NewCategoryForm {
+  NewCategoryForm(label: String)
+}
+
+fn new_category_form() -> NewCategoryForm {
+  NewCategoryForm(label: "")
 }
 
 pub type Notice {
@@ -177,6 +189,7 @@ pub type UnauthenticatedMsg {
 
 pub type AuthenticatedMsg {
   ApiCreatedHabit(Result(Nil, HttpError))
+  ApiCreatedCategory(Result(Nil, HttpError))
   ApiArchivedHabit(Habit, Date, Result(Nil, HttpError))
   ApiDeletedHabit(Habit, Result(Nil, HttpError))
   ApiReturnedHabits(Date, Result(List(Habit), HttpError))
@@ -184,10 +197,13 @@ pub type AuthenticatedMsg {
   ApiUnarchivedHabit(Habit, Result(Nil, HttpError))
   NewHabitFormSubmitted
   NewHabitLabelChanged(String)
+  NewCategoryFormSubmitted
+  NewCategoryLabelChanged(String)
   UserArchivedHabit(Habit, Date)
   UserDeletedHabit(Habit)
   UserDeletedHabitCancelled
   UserDeletedHabitCommitted(Habit)
+  UserToggledExpandedActions(Bool)
   UserToggledHabit(Habit, Bool)
   UserUnarchivedHabit(Habit)
 }
@@ -305,6 +321,10 @@ pub fn update_authenticated(
         }
       }
     }
+    ApiCreatedCategory(_result) -> {
+      #(Model(..model, new_category_form: new_category_form()), effect.none())
+      |> return.then(fetch_habits_for_displayed_date(_, session))
+    }
     ApiCreatedHabit(_result) -> {
       #(
         Model(..model, new_habit_form: new_habit_form(), is_adding: False),
@@ -334,6 +354,15 @@ pub fn update_authenticated(
     NewHabitFormSubmitted -> {
       #(Model(..model, is_adding: True), create_habit(model, session))
     }
+    NewCategoryLabelChanged(label) -> {
+      #(
+        Model(..model, new_category_form: NewCategoryForm(label:)),
+        effect.none(),
+      )
+    }
+    NewCategoryFormSubmitted -> {
+      #(model, create_category(model, session))
+    }
     UserArchivedHabit(habit, date) -> {
       #(model, archive_habit(model, session, habit, date))
     }
@@ -345,6 +374,9 @@ pub fn update_authenticated(
     }
     UserDeletedHabitCommitted(habit) -> {
       #(Model(..model, modal: ModalNone), delete_habit(model, session, habit))
+    }
+    UserToggledExpandedActions(state) -> {
+      #(Model(..model, show_expanded_actions: state), effect.none())
     }
     UserUnarchivedHabit(habit) -> {
       #(model, unarchive_habit(model, session, habit))
@@ -480,6 +512,27 @@ fn fetch_habits_for_displayed_date(
     |> lustre_http.send(expect)
 
   #(Model(..model, habits: RemoteDataLoading), effect)
+}
+
+fn create_category(model: Model, session: SessionData) -> effect.Effect(Msg) {
+  let expect = lustre_http.expect_anything(ApiCreatedCategory)
+
+  let payload =
+    json.object([
+      //
+      #("label", json.string(model.new_category_form.label)),
+    ])
+
+  api_crud_request(
+    flags: model.flags,
+    method: Post,
+    path: "/categories",
+    payload: Some(payload),
+    query: [],
+    session:,
+  )
+  |> lustre_http.send(expect)
+  |> effect.map(AuthenticatedMsg(session, _))
 }
 
 fn create_habit(model: Model, session: SessionData) -> effect.Effect(Msg) {
@@ -746,7 +799,7 @@ fn view_authenticated(
     view_header(model, session),
     //
     view_pagination(model, today),
-    view_new_habit_form(model, session),
+    view_actions(model, session),
     view_habits(model, today),
     view_maybe_modal(model),
   ])
@@ -783,32 +836,89 @@ fn view_header(_model: Model, session: SessionData) {
   ])
 }
 
-fn view_new_habit_form(model: Model, _session: SessionData) {
-  html.section([class("t-new-habit-form px-4 py-3 bg-slate-100")], [
+fn view_actions(model: Model, _session: SessionData) {
+  html.section([class("t-panel-actions px-4 bg-slate-100")], [
     //
-    html.form(
-      [
-        //
-        class("flex space-x-2 items-center"),
-        event.on_submit(NewHabitFormSubmitted),
-      ],
-      [
-        //
-        html.label([class("")], [text("New")]),
-        components.input([
-          class("t-input-new"),
-          attr.type_("text"),
-          attr.name("label"),
-          attr.value(model.new_habit_form.label),
-          event.on_input(NewHabitLabelChanged),
-        ]),
-        buttons.new(buttons.ActionSubmit)
-          |> buttons.with_label("Add")
-          |> buttons.with_is_disabled(model.is_adding)
-          |> buttons.view,
-      ],
-    ),
+    div([class("flex justify-between py-3")], [
+      view_new_habit_form(model),
+      div([], [view_actions_btn_expand(model)]),
+    ]),
+    view_actions_expanded(model),
   ])
+}
+
+fn view_new_habit_form(model: Model) {
+  html.form(
+    [
+      //
+      class("t-new-habit-form flex space-x-2 items-center"),
+      event.on_submit(NewHabitFormSubmitted),
+    ],
+    [
+      //
+      components.input([
+        class("t-input-new"),
+        attr.type_("text"),
+        attr.name("label"),
+        attr.value(model.new_habit_form.label),
+        event.on_input(NewHabitLabelChanged),
+      ]),
+      buttons.new(buttons.ActionSubmit)
+        |> buttons.with_label("Add Habit")
+        |> buttons.with_icon_left(icons.Plus)
+        |> buttons.with_is_disabled(model.is_adding)
+        |> buttons.view,
+    ],
+  )
+}
+
+fn view_new_category_form(model: Model) {
+  html.form(
+    [
+      //
+      class("t-new-category-form flex space-x-2 items-center"),
+      event.on_submit(NewCategoryFormSubmitted),
+    ],
+    [
+      //
+      components.input([
+        class("t-input-new"),
+        attr.type_("text"),
+        attr.name("label"),
+        attr.value(model.new_category_form.label),
+        event.on_input(NewCategoryLabelChanged),
+      ]),
+      buttons.new(buttons.ActionSubmit)
+        |> buttons.with_label("Add Category")
+        |> buttons.with_icon_left(icons.Plus)
+        |> buttons.with_variant(buttons.VariantSecondary)
+        |> buttons.with_is_disabled(model.is_adding)
+        |> buttons.view,
+    ],
+  )
+}
+
+fn view_actions_btn_expand(model: Model) {
+  let next_state = !model.show_expanded_actions
+
+  let icon = case model.show_expanded_actions {
+    True -> icons.ChevronDown
+    False -> icons.ChevronRight
+  }
+  buttons.new(buttons.ActionClick(UserToggledExpandedActions(next_state)))
+  |> buttons.with_icon_left(icon)
+  |> buttons.with_variant(buttons.VariantUnfilled)
+  |> buttons.view
+}
+
+fn view_actions_expanded(model: Model) {
+  let clases =
+    attr.classes([
+      #("t-expanded-actions py-2", True),
+      #("hidden", !model.show_expanded_actions),
+    ])
+
+  div([clases], [view_new_category_form(model)])
 }
 
 fn date_to_query_string(date: Date) -> String {
@@ -907,7 +1017,7 @@ fn view_habit(habit: Habit, date: Date, today: Date) {
       buttons.new(buttons.ActionClick(UserArchivedHabit(habit, date)))
       |> buttons.with_icon_left(icons.Archive)
       |> buttons.with_variant(buttons.VariantUnfilled)
-      |> buttons.with_attrs([icon_button_classes])
+      |> buttons.with_attrs([class("t-btn-archive"), icon_button_classes])
       |> buttons.view
     }
     False -> {
@@ -920,8 +1030,10 @@ fn view_habit(habit: Habit, date: Date, today: Date) {
       buttons.new(buttons.ActionClick(UserUnarchivedHabit(habit)))
       |> buttons.with_icon_left(icons.Unarchive)
       |> buttons.with_variant(buttons.VariantUnfilled)
-      |> buttons.with_attrs([class("text-slate-500")])
-      |> buttons.with_attrs([icon_button_classes])
+      |> buttons.with_attrs([
+        class("t-btn-unarchive text-slate-500"),
+        icon_button_classes,
+      ])
       |> buttons.view
 
     False -> text("")
@@ -931,7 +1043,7 @@ fn view_habit(habit: Habit, date: Date, today: Date) {
     buttons.new(buttons.ActionClick(UserDeletedHabit(habit)))
     |> buttons.with_icon_left(icons.Trash)
     |> buttons.with_variant(buttons.VariantUnfilled)
-    |> buttons.with_attrs([icon_button_classes])
+    |> buttons.with_attrs([class("t-btn-delete"), icon_button_classes])
     |> buttons.view
 
   html.tr([class("t-habit")], [

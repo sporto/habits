@@ -6,8 +6,11 @@ pub type Icon {
   Archive
   Clear
   Check
+  ChevronDown
   ChevronLeft
   ChevronRight
+  ChevronUp
+  Plus
   Trash
   Unarchive
 }
@@ -15,10 +18,13 @@ pub type Icon {
 pub fn icon(icon icon: Icon) {
   let svg = case icon {
     Archive -> mini.archive_box_arrow_down()
-    Clear -> mini.x_mark()
     Check -> mini.check()
+    ChevronDown -> mini.chevron_down()
     ChevronLeft -> mini.chevron_left()
     ChevronRight -> mini.chevron_right()
+    ChevronUp -> mini.chevron_up()
+    Clear -> mini.x_mark()
+    Plus -> mini.plus()
     Trash -> mini.trash()
     Unarchive -> mini.archive_box_x_mark()
   }
