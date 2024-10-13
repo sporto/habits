@@ -116,17 +116,23 @@ pub type Category {
   Category(id: String, label: String)
 }
 
+pub type Categorized {
+  Categorized(Category)
+  Uncategorized
+}
+
 pub type HabitCollection {
   HabitCollection(date: Date, items: List(Habit))
 }
 
 pub type Habit {
   Habit(
+    category_id: Option(String),
+    checks: List(Check),
     id: String,
     label: String,
     started_at: Date,
     stopped_at: Option(Date),
-    checks: List(Check),
   )
 }
 
@@ -147,13 +153,14 @@ fn categories_decoder() -> dynamic.Decoder(List(Category)) {
 }
 
 fn habit_decoder() -> dynamic.Decoder(Habit) {
-  dynamic.decode5(
+  dynamic.decode6(
     Habit,
+    dynamic.field("category_id", dynamic.optional(dynamic.string)),
+    dynamic.field("checks", dynamic.list(check_decoder())),
     dynamic.field("id", dynamic.string),
     dynamic.field("label", dynamic.string),
     dynamic.field("started_at", date_decoder),
     dynamic.field("stopped_at", dynamic.optional(date_decoder)),
-    dynamic.field("checks", dynamic.list(check_decoder())),
   )
 }
 
@@ -1043,7 +1050,16 @@ fn view_habits(model: Model, today: Date) {
   case model.habits {
     RemoteDataNotAsked | RemoteDataLoading ->
       view_habits_wrapper([text("Loading habits...")])
-    RemoteDataSuccess(habits) -> view_habits_with_data(habits, today)
+    RemoteDataSuccess(habits) -> {
+      case model.categories {
+        RemoteDataNotAsked | RemoteDataLoading ->
+          view_habits_wrapper([text("Loading categories...")])
+        RemoteDataSuccess(categories) -> {
+          view_habits_with_data(categories, habits, today)
+        }
+        RemoteDataFailure(error) -> text(error)
+      }
+    }
     RemoteDataFailure(error) -> text(error)
   }
 }
@@ -1052,21 +1068,70 @@ fn view_habits_wrapper(children) {
   html.section([class("t-habits-wrapper px-4 py-4")], children)
 }
 
-fn view_habits_with_data(habit_collection: HabitCollection, today: Date) {
+fn view_habits_with_data(
+  categories: CategoryCollection,
+  habit_collection: HabitCollection,
+  today: Date,
+) {
   let sorted =
     habit_collection.items
     |> list.sort(by: fn(a, b) {
       string.compare(a.label |> string.lowercase, b.label |> string.lowercase)
     })
 
+  let all_categories =
+    categories.items
+    |> list.map(Categorized)
+    |> list.append([Uncategorized])
+
   view_habits_wrapper([
     html.table([class("t-habits-list w-full table-fixed")], [
       html.tbody(
         [],
-        list.map(sorted, view_habit(_, habit_collection.date, today)),
+        list.flat_map(all_categories, view_category(
+          _,
+          habit_collection.date,
+          today,
+          sorted,
+        )),
       ),
     ]),
   ])
+}
+
+fn view_category(
+  categorized: Categorized,
+  date: Date,
+  today: Date,
+  sorted_habits: List(Habit),
+) {
+  let #(category_id, label) = case categorized {
+    Categorized(category) -> #(Some(category.id), category.label)
+    Uncategorized -> #(None, "Uncategorized")
+  }
+
+  let relevant_habits =
+    sorted_habits
+    |> list.filter(fn(habit) { habit.category_id == category_id })
+
+  let habit_rows = case relevant_habits == [] {
+    True -> [
+      html.tr([], [
+        html.td([class("text-slate-300 pl-4 text-lg")], [text("Empty")]),
+      ]),
+    ]
+    False -> {
+      relevant_habits
+      |> list.map(view_habit(_, date, today))
+    }
+  }
+
+  [
+    html.tr([], [
+      html.th([class("text-left text-slate-600 py-2")], [text(label)]),
+    ]),
+    ..habit_rows
+  ]
 }
 
 fn view_habit(habit: Habit, date: Date, today: Date) {
@@ -1114,7 +1179,7 @@ fn view_habit(habit: Habit, date: Date, today: Date) {
     |> buttons.view
 
   html.tr([class("t-habit")], [
-    html.td([class("py-2")], [
+    html.td([class("pl-4 py-2")], [
       html.label([class("space-x-2 flex items-center text-lg")], [
         html.div([], [
           html.input([
