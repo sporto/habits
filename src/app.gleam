@@ -170,10 +170,12 @@ pub type AuthenticatedMsg {
   ApiCreatedHabit(Result(Nil, HttpError))
   ApiReturnedHabits(Date, Result(List(Habit), HttpError))
   ApiToggledHabit(Habit, Date, Bool, Result(Nil, HttpError))
-  ApiClearedHabit(Habit, Date, Result(Nil, HttpError))
+  ApiArchivedHabit(Habit, Date, Result(Nil, HttpError))
+  ApiUnarchivedHabit(Habit, Result(Nil, HttpError))
   NewHabitFormSubmitted
   NewHabitLabelChanged(String)
-  UserClearedHabit(Habit, Date)
+  UserArchivedHabit(Habit, Date)
+  UserUnarchivedHabit(Habit)
   UserToggledHabit(Habit, Bool)
 }
 
@@ -297,7 +299,11 @@ pub fn update_authenticated(
       )
       |> return.then(fetch_habits_for_displayed_date(_, session))
     }
-    ApiClearedHabit(_habit, _date, _result) -> {
+    ApiArchivedHabit(_habit, _date, _result) -> {
+      #(model, effect.none())
+      |> return.then(fetch_habits_for_displayed_date(_, session))
+    }
+    ApiUnarchivedHabit(_habit, _result) -> {
       #(model, effect.none())
       |> return.then(fetch_habits_for_displayed_date(_, session))
     }
@@ -311,8 +317,11 @@ pub fn update_authenticated(
     NewHabitFormSubmitted -> {
       #(Model(..model, is_adding: True), create_habit(model, session))
     }
-    UserClearedHabit(habit, date) -> {
-      #(model, clear_habit(model, session, habit, date))
+    UserArchivedHabit(habit, date) -> {
+      #(model, archive_habit(model, session, habit, date))
+    }
+    UserUnarchivedHabit(habit) -> {
+      #(model, unarchive_habit(model, session, habit))
     }
     UserToggledHabit(habit, state) -> {
       #(model, toggle_check(model, session, habit, state))
@@ -514,8 +523,8 @@ fn toggle_check(
   |> effect.map(AuthenticatedMsg(session, _))
 }
 
-fn clear_habit(model: Model, session: SessionData, habit: Habit, date: Date) {
-  let message = ApiClearedHabit(habit, date, _)
+fn archive_habit(model: Model, session: SessionData, habit: Habit, date: Date) {
+  let message = ApiArchivedHabit(habit, date, _)
   let expect = lustre_http.expect_anything(message)
   let date_str = date_to_string(date)
 
@@ -523,6 +532,31 @@ fn clear_habit(model: Model, session: SessionData, habit: Habit, date: Date) {
     json.object([
       //
       #("stopped_at", json.string(date_str)),
+    ])
+
+  let request =
+    api_crud_request(
+      flags: model.flags,
+      method: http.Patch,
+      path: "/habits",
+      payload: Some(payload),
+      query: [#("id", "eq." <> habit.id)],
+      session:,
+    )
+
+  request
+  |> lustre_http.send(expect)
+  |> effect.map(AuthenticatedMsg(session, _))
+}
+
+fn unarchive_habit(model: Model, session: SessionData, habit: Habit) {
+  let message = ApiUnarchivedHabit(habit, _)
+  let expect = lustre_http.expect_anything(message)
+
+  let payload =
+    json.object([
+      //
+      #("stopped_at", json.null()),
     ])
 
   let request =
@@ -763,14 +797,16 @@ fn view_habits_wrapper(children) {
 
 fn view_habits_with_data(habit_collection: HabitCollection, today: Date) {
   view_habits_wrapper([
-    html.ul(
-      [class("t-habits-list")],
-      list.map(habit_collection.items, view_habit(
-        _,
-        habit_collection.date,
-        today,
-      )),
-    ),
+    html.table([class("t-habits-list w-full")], [
+      html.tbody(
+        [],
+        list.map(habit_collection.items, view_habit(
+          _,
+          habit_collection.date,
+          today,
+        )),
+      ),
+    ]),
   ])
 }
 
@@ -782,36 +818,42 @@ fn view_habit(habit: Habit, date: Date, today: Date) {
   let is_habit_for_today = date == today
   let is_habit_stopped = habit.stopped_at == Some(date)
 
-  let btn_clear = case is_habit_for_today && !is_habit_stopped {
+  let btn_archive = case is_habit_for_today && !is_habit_stopped {
     True -> {
-      components.button([event.on_click(UserClearedHabit(habit, date))], [
-        components.icon_clear([]),
-      ])
+      components.button(
+        [class("p-2"), event.on_click(UserArchivedHabit(habit, date))],
+        [components.icon_archive([])],
+      )
     }
     False -> {
       text("")
     }
   }
 
-  let stopped = case is_habit_for_today && is_habit_stopped {
-    True -> components.icon_check([class("text-slate-300")])
+  let stopped = case is_habit_stopped {
+    True ->
+      components.button(
+        [class("p-2"), event.on_click(UserUnarchivedHabit(habit))],
+        [components.icon_unarchive([class("text-slate-500")])],
+      )
     False -> text("")
   }
 
-  html.li([class("t-habit py-2")], [
-    html.label([class("space-x-2 flex items-center text-lg")], [
-      html.div([], [
-        html.input([
-          class("h-5 w-5"),
-          attr.type_("checkbox"),
-          attr.checked(is_checked),
-          event.on_check(UserToggledHabit(habit, _)),
+  html.tr([class("t-habit")], [
+    html.td([class("py-2")], [
+      html.label([class("space-x-2 flex items-center text-lg")], [
+        html.div([], [
+          html.input([
+            class("h-5 w-5"),
+            attr.type_("checkbox"),
+            attr.checked(is_checked),
+            event.on_check(UserToggledHabit(habit, _)),
+          ]),
         ]),
+        html.div([], [text(habit.label)]),
       ]),
-      html.div([], [text(habit.label)]),
-      btn_clear,
-      stopped,
     ]),
+    html.td([class("text-right")], [btn_archive, stopped]),
   ])
 }
 

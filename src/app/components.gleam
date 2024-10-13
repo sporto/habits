@@ -6,6 +6,10 @@ fn icon_wrapper(attrs, icon) {
   div([class("w-5 h-5"), ..attrs], [icon])
 }
 
+pub fn icon_archive(attrs) {
+  icon_wrapper(attrs, solid.archive_box_arrow_down())
+}
+
 pub fn icon_clear(attrs) {
   icon_wrapper(attrs, solid.x_mark())
 }
@@ -20,6 +24,10 @@ pub fn icon_chevron_left(attrs) {
 
 pub fn icon_chevron_right(attrs) {
   icon_wrapper(attrs, solid.chevron_right())
+}
+
+pub fn icon_unarchive(attrs) {
+  icon_wrapper(attrs, solid.archive_box_x_mark())
 }
 
 pub fn input(attrs) {
