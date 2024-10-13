@@ -42,6 +42,7 @@ pub type Model {
     new_habit_form: NewHabitForm,
     new_category_form: NewCategoryForm,
     notices: List(Notice),
+    selected_habit: Option(Habit),
     show_expanded_actions: Bool,
   )
 }
@@ -59,6 +60,7 @@ fn new_model(flags: Flags, date: Date) -> Model {
     new_category_form: new_category_form(),
     new_habit_form: new_habit_form(),
     notices: [],
+    selected_habit: None,
     show_expanded_actions: False,
   )
 }
@@ -227,10 +229,12 @@ pub type AuthenticatedMsg {
   NewHabitLabelChanged(String)
   NewCategoryFormSubmitted
   NewCategoryLabelChanged(String)
+  SelectedCategoryToMoveHabitTo(Category, Habit)
   UserArchivedHabit(Habit, Date)
   UserDeletedHabit(Habit)
   UserDeletedHabitCancelled
   UserDeletedHabitCommitted(Habit)
+  UserSelectedHabit(Habit)
   UserToggledExpandedActions(Bool)
   UserToggledHabit(Habit, Bool)
   UserUnarchivedHabit(Habit)
@@ -412,6 +416,10 @@ pub fn update_authenticated(
     NewCategoryFormSubmitted -> {
       #(model, create_category(model, session))
     }
+    SelectedCategoryToMoveHabitTo(category, habit) -> {
+      // TODO
+      #(model, effect.none())
+    }
     UserArchivedHabit(habit, date) -> {
       #(model, archive_habit(model, session, habit, date))
     }
@@ -429,6 +437,9 @@ pub fn update_authenticated(
     }
     UserUnarchivedHabit(habit) -> {
       #(model, unarchive_habit(model, session, habit))
+    }
+    UserSelectedHabit(habit) -> {
+      #(Model(..model, selected_habit: Some(habit)), effect.none())
     }
     UserToggledHabit(habit, state) -> {
       #(model, toggle_check(model, session, habit, state))
@@ -1055,7 +1066,7 @@ fn view_habits(model: Model, today: Date) {
         RemoteDataNotAsked | RemoteDataLoading ->
           view_habits_wrapper([text("Loading categories...")])
         RemoteDataSuccess(categories) -> {
-          view_habits_with_data(categories, habits, today)
+          view_habits_with_data(categories, habits, model.selected_habit, today)
         }
         RemoteDataFailure(error) -> text(error)
       }
@@ -1065,12 +1076,13 @@ fn view_habits(model: Model, today: Date) {
 }
 
 fn view_habits_wrapper(children) {
-  html.section([class("t-habits-wrapper px-4 py-4")], children)
+  html.section([class("t-habits-wrapper pl-4 pr-3 py-4")], children)
 }
 
 fn view_habits_with_data(
   categories: CategoryCollection,
   habit_collection: HabitCollection,
+  selected_habit: Option(Habit),
   today: Date,
 ) {
   let sorted =
@@ -1092,6 +1104,7 @@ fn view_habits_with_data(
           _,
           habit_collection.date,
           today,
+          selected_habit,
           sorted,
         )),
       ),
@@ -1103,16 +1116,50 @@ fn view_category(
   categorized: Categorized,
   date: Date,
   today: Date,
+  selected_habit: Option(Habit),
   sorted_habits: List(Habit),
 ) {
-  let #(category_id, label) = case categorized {
-    Categorized(category) -> #(Some(category.id), category.label)
-    Uncategorized -> #(None, "Uncategorized")
+  let category = case categorized {
+    Categorized(category) -> Some(category)
+    Uncategorized -> None
+  }
+
+  let #(category_id, category_label) = case category {
+    Some(category) -> #(Some(category.id), category.label)
+    None -> #(None, "Uncategorized")
   }
 
   let relevant_habits =
     sorted_habits
     |> list.filter(fn(habit) { habit.category_id == category_id })
+
+  let move_here = case selected_habit {
+    Some(habit) -> {
+      case category {
+        None -> []
+        Some(category) -> {
+          case habit.category_id == Some(category.id) {
+            True -> []
+            False -> {
+              [
+                html.button(
+                  [
+                    class("font-normal"),
+                    event.on_click(SelectedCategoryToMoveHabitTo(
+                      category,
+                      habit,
+                    )),
+                  ],
+                  [text("Move here")],
+                ),
+              ]
+            }
+          }
+        }
+      }
+    }
+    None -> []
+  }
 
   let habit_rows = case relevant_habits == [] {
     True -> [
@@ -1128,7 +1175,8 @@ fn view_category(
 
   [
     html.tr([], [
-      html.th([class("text-left text-slate-600 py-2")], [text(label)]),
+      html.th([class("text-left text-slate-600 py-2")], [text(category_label)]),
+      html.th([class("text-right")], move_here),
     ]),
     ..habit_rows
   ]
@@ -1142,7 +1190,18 @@ fn view_habit(habit: Habit, date: Date, today: Date) {
   let is_habit_for_today = date == today
   let is_habit_stopped = habit.stopped_at == Some(date)
 
-  let icon_button_classes = class("px-2")
+  let icon_button_classes = class("")
+
+  let btn_move =
+    div([class("px-3")], [
+      html.input([
+        event.on_click(UserSelectedHabit(habit)),
+        attr.type_("radio"),
+        attr.name("move"),
+        attr.value(habit.id),
+        class("w-5 h-5"),
+      ]),
+    ])
 
   let btn_archive = case is_habit_for_today && !is_habit_stopped {
     True -> {
@@ -1192,8 +1251,9 @@ fn view_habit(habit: Habit, date: Date, today: Date) {
         html.div([class("truncate")], [text(habit.label)]),
       ]),
     ]),
-    html.td([style([#("width", "8rem")])], [
+    html.td([style([#("max-width", "6rem")])], [
       div([class("flex items-center justify-end")], [
+        btn_move,
         btn_archive,
         btn_unarchive,
         btn_delete,
