@@ -902,6 +902,7 @@ fn view_modal_delete_habit(_model: Model, habit: Habit) {
     html.p([class("pb-2")], [
       text("Completely delete this habit? There is no undo."),
     ]),
+    html.p([class("pb-2 font-semibold")], [text(habit.label)]),
     html.div([class("py-2 space-x-3 text-right")], [
       buttons.new(buttons.ActionClick(UserDeletedHabitCancelled))
         |> buttons.with_label("Cancel")
@@ -949,7 +950,7 @@ fn view_new_habit_form(model: Model) {
         event.on_input(NewHabitLabelChanged),
       ]),
       buttons.new(buttons.ActionSubmit)
-        |> buttons.with_label("Add Habit")
+        |> buttons.with_label("Add")
         |> buttons.with_icon_left(icons.Plus)
         |> buttons.with_is_disabled(model.is_adding)
         |> buttons.view,
@@ -961,24 +962,28 @@ fn view_new_category_form(model: Model) {
   html.form(
     [
       //
-      class("t-new-category-form flex space-x-2 items-center"),
+      class("t-new-category-form"),
       event.on_submit(NewCategoryFormSubmitted),
     ],
     [
-      //
-      components.input([
-        class("t-input-new"),
-        attr.type_("text"),
-        attr.name("label"),
-        attr.value(model.new_category_form.label),
-        event.on_input(NewCategoryLabelChanged),
+      div([class("pb-2")], [
+        html.label([class("block")], [text("Add Category")]),
       ]),
-      buttons.new(buttons.ActionSubmit)
-        |> buttons.with_label("Add Category")
-        |> buttons.with_icon_left(icons.Plus)
-        |> buttons.with_variant(buttons.VariantSecondary)
-        |> buttons.with_is_disabled(model.is_adding)
-        |> buttons.view,
+      div([class("flex space-x-2 items-center")], [
+        //
+        components.input([
+          class("t-input-new"),
+          attr.type_("text"),
+          attr.name("label"),
+          attr.value(model.new_category_form.label),
+          event.on_input(NewCategoryLabelChanged),
+        ]),
+        buttons.new(buttons.ActionSubmit)
+          |> buttons.with_icon_left(icons.Plus)
+          |> buttons.with_variant(buttons.VariantSecondary)
+          |> buttons.with_is_disabled(model.is_adding)
+          |> buttons.view,
+      ]),
     ],
   )
 }
