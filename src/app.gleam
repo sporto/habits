@@ -234,7 +234,7 @@ pub type AuthenticatedMsg {
   UserDeletedHabit(Habit)
   UserDeletedHabitCancelled
   UserDeletedHabitCommitted(Habit)
-  UserSelectedHabit(Habit)
+  UserSelectedHabit(Option(Habit))
   UserToggledExpandedActions(Bool)
   UserToggledHabit(Habit, Bool)
   UserUnarchivedHabit(Habit)
@@ -439,7 +439,7 @@ pub fn update_authenticated(
       #(model, unarchive_habit(model, session, habit))
     }
     UserSelectedHabit(habit) -> {
-      #(Model(..model, selected_habit: Some(habit)), effect.none())
+      #(Model(..model, selected_habit: habit), effect.none())
     }
     UserToggledHabit(habit, state) -> {
       #(model, toggle_check(model, session, habit, state))
@@ -1097,7 +1097,7 @@ fn view_habits_with_data(
     |> list.append([Uncategorized])
 
   view_habits_wrapper([
-    html.table([class("t-habits-list w-full table-fixed")], [
+    html.table([class("t-habits-list w-full table-auto")], [
       html.tbody(
         [],
         list.flat_map(all_categories, view_category(
@@ -1110,6 +1110,10 @@ fn view_habits_with_data(
       ),
     ]),
   ])
+}
+
+fn col1_classes() {
+  class("max-w-5")
 }
 
 fn view_category(
@@ -1136,71 +1140,89 @@ fn view_category(
   let move_here = case selected_habit {
     Some(habit) -> {
       case category {
-        None -> []
+        None -> element.none()
         Some(category) -> {
           case habit.category_id == Some(category.id) {
-            True -> []
+            True -> element.none()
             False -> {
-              [
-                html.button(
-                  [
-                    class("font-normal"),
-                    event.on_click(SelectedCategoryToMoveHabitTo(
+              html.tr([], [
+                html.td([], []),
+                html.td([attr.attribute("colspan", "2")], [
+                  buttons.new(
+                    buttons.ActionClick(SelectedCategoryToMoveHabitTo(
                       category,
                       habit,
                     )),
-                  ],
-                  [text("Move here")],
-                ),
-              ]
+                  )
+                  |> buttons.with_label("Move here")
+                  |> buttons.with_variant(buttons.VariantOutlined)
+                  |> buttons.view,
+                ]),
+              ])
             }
           }
         }
       }
     }
-    None -> []
+    None -> element.none()
   }
+
+  let selected_habit_id = option.map(selected_habit, fn(h) { h.id })
 
   let habit_rows = case relevant_habits == [] {
     True -> [
       html.tr([], [
-        html.td([class("text-slate-300 pl-4 text-lg")], [text("Empty")]),
+        html.td([col1_classes()], []),
+        html.td([class("text-slate-300 text-lg")], [text("Empty")]),
+        html.td([], []),
       ]),
     ]
     False -> {
       relevant_habits
-      |> list.map(view_habit(_, date, today))
+      |> list.flat_map(view_habit(_, date, today, selected_habit_id))
     }
   }
 
   [
     html.tr([], [
-      html.th([class("text-left text-slate-600 py-2")], [text(category_label)]),
-      html.th([class("text-right")], move_here),
+      html.th(
+        [class("text-left text-slate-600 py-2"), attr.attribute("colspan", "3")],
+        [text(category_label)],
+      ),
     ]),
+    move_here,
     ..habit_rows
   ]
 }
 
-fn view_habit(habit: Habit, date: Date, today: Date) {
+fn view_habit(
+  habit: Habit,
+  date: Date,
+  today: Date,
+  selected_habit_id: Option(String),
+) -> List(Element(AuthenticatedMsg)) {
   let is_checked =
     habit.checks
     |> list.any(fn(check) { check.date == date })
 
+  let is_selected = selected_habit_id == Some(habit.id)
+
   let is_habit_for_today = date == today
   let is_habit_stopped = habit.stopped_at == Some(date)
 
-  let icon_button_classes = class("")
+  let radio_click = case is_selected {
+    True -> UserSelectedHabit(None)
+    False -> UserSelectedHabit(Some(habit))
+  }
 
   let btn_move =
-    div([class("px-3")], [
-      html.input([
-        event.on_click(UserSelectedHabit(habit)),
-        attr.type_("radio"),
-        attr.name("move"),
-        attr.value(habit.id),
-        class("w-5 h-5"),
-      ]),
+    html.input([
+      event.on_click(radio_click),
+      attr.type_("radio"),
+      attr.checked(is_selected),
+      attr.name("move"),
+      attr.value(habit.id),
+      class("w-5 h-5"),
     ])
 
   let btn_archive = case is_habit_for_today && !is_habit_stopped {
@@ -1208,7 +1230,7 @@ fn view_habit(habit: Habit, date: Date, today: Date) {
       buttons.new(buttons.ActionClick(UserArchivedHabit(habit, date)))
       |> buttons.with_icon_left(icons.Archive)
       |> buttons.with_variant(buttons.VariantUnfilled)
-      |> buttons.with_attrs([class("t-btn-archive"), icon_button_classes])
+      |> buttons.with_attrs([class("t-btn-archive")])
       |> buttons.view
     }
     False -> {
@@ -1221,10 +1243,7 @@ fn view_habit(habit: Habit, date: Date, today: Date) {
       buttons.new(buttons.ActionClick(UserUnarchivedHabit(habit)))
       |> buttons.with_icon_left(icons.Unarchive)
       |> buttons.with_variant(buttons.VariantUnfilled)
-      |> buttons.with_attrs([
-        class("t-btn-unarchive text-slate-500"),
-        icon_button_classes,
-      ])
+      |> buttons.with_attrs([class("t-btn-unarchive text-slate-500")])
       |> buttons.view
 
     False -> text("")
@@ -1234,32 +1253,48 @@ fn view_habit(habit: Habit, date: Date, today: Date) {
     buttons.new(buttons.ActionClick(UserDeletedHabit(habit)))
     |> buttons.with_icon_left(icons.Trash)
     |> buttons.with_variant(buttons.VariantUnfilled)
-    |> buttons.with_attrs([class("t-btn-delete"), icon_button_classes])
+    |> buttons.with_attrs([class("t-btn-delete")])
     |> buttons.view
 
-  html.tr([class("t-habit")], [
-    html.td([class("pl-4 py-2")], [
-      html.label([class("space-x-2 flex items-center text-lg")], [
-        html.div([], [
-          html.input([
-            class("h-5 w-5"),
-            attr.type_("checkbox"),
-            attr.checked(is_checked),
-            event.on_check(UserToggledHabit(habit, _)),
+  let td_classes = case is_selected {
+    True -> class("bg-slate-100")
+    False -> class("")
+  }
+
+  let row1 =
+    html.tr([class("t-habit")], [
+      html.td([td_classes, col1_classes(), class("t-habit-check")], [
+        html.input([
+          class("h-5 w-5"),
+          attr.type_("checkbox"),
+          attr.checked(is_checked),
+          event.on_check(UserToggledHabit(habit, _)),
+        ]),
+      ]),
+      html.td([td_classes, class("t-habit-label pl-4 py-2")], [
+        div([class("text-lg max-w-72 truncate")], [text(habit.label)]),
+      ]),
+      html.td(
+        [td_classes, class("text-right"), style([#("max-width", "3rem")])],
+        [btn_move],
+      ),
+    ])
+
+  let row2 = case is_selected {
+    True ->
+      html.tr([class("bg-slate-100")], [
+        html.td([class(""), attr.attribute("colspan", "3")], [
+          div([class("flex items-center justify-end")], [
+            btn_archive,
+            btn_unarchive,
+            btn_delete,
           ]),
         ]),
-        html.div([class("truncate")], [text(habit.label)]),
-      ]),
-    ]),
-    html.td([style([#("max-width", "6rem")])], [
-      div([class("flex items-center justify-end")], [
-        btn_move,
-        btn_archive,
-        btn_unarchive,
-        btn_delete,
-      ]),
-    ]),
-  ])
+      ])
+    False -> element.none()
+  }
+
+  [row1, row2]
 }
 
 /// Helpers
