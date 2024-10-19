@@ -1102,18 +1102,19 @@ fn view_habits_with_data(
     |> list.append([Uncategorized])
 
   view_habits_wrapper([
-    html.table([class("t-habits-list w-full table-auto")], [
-      html.tbody(
-        [],
-        list.flat_map(all_categories, view_category(
-          _,
-          habit_collection.date,
-          today,
-          selected_habit,
-          sorted,
-        )),
-      ),
-    ]),
+    div(
+      [
+        class("t-habit-list w-full grid"),
+        style([#("grid-template-columns", "2rem 1fr 2rem")]),
+      ],
+      list.flat_map(all_categories, view_category(
+        _,
+        habit_collection.date,
+        today,
+        selected_habit,
+        sorted,
+      )),
+    ),
   ])
 }
 
@@ -1150,19 +1151,16 @@ fn view_category(
           case habit.category_id == Some(category.id) {
             True -> element.none()
             False -> {
-              html.tr([], [
-                html.td([], []),
-                html.td([attr.attribute("colspan", "2")], [
-                  buttons.new(
-                    buttons.ActionClick(SelectedCategoryToMoveHabitTo(
-                      category,
-                      habit,
-                    )),
-                  )
-                  |> buttons.with_label("Move here")
-                  |> buttons.with_variant(buttons.VariantOutlined)
-                  |> buttons.view,
-                ]),
+              div([class("t-move-here col-span-full")], [
+                buttons.new(
+                  buttons.ActionClick(SelectedCategoryToMoveHabitTo(
+                    category,
+                    habit,
+                  )),
+                )
+                |> buttons.with_label("Move here")
+                |> buttons.with_variant(buttons.VariantOutlined)
+                |> buttons.view,
               ])
             }
           }
@@ -1176,11 +1174,7 @@ fn view_category(
 
   let habit_rows = case relevant_habits == [] {
     True -> [
-      html.tr([], [
-        html.td([col1_classes()], []),
-        html.td([class("text-slate-300 text-lg")], [text("Empty")]),
-        html.td([], []),
-      ]),
+      div([class("text-slate-300 text-lg col-span-full")], [text("Empty")]),
     ]
     False -> {
       relevant_habits
@@ -1189,11 +1183,8 @@ fn view_category(
   }
 
   [
-    html.tr([], [
-      html.th(
-        [class("text-left text-slate-600 py-2"), attr.attribute("colspan", "3")],
-        [text(category_label)],
-      ),
+    div([class("text-left text-slate-600 py-2 col-span-full")], [
+      text(category_label),
     ]),
     move_here,
     ..habit_rows
@@ -1261,45 +1252,42 @@ fn view_habit(
     |> buttons.with_attrs([class("t-btn-delete")])
     |> buttons.view
 
-  let td_classes = case is_selected {
-    True -> class("bg-slate-100")
-    False -> class("")
-  }
-
-  let row1 =
-    html.tr([class("t-habit")], [
-      html.td([td_classes, col1_classes(), class("t-habit-check")], [
-        html.input([
-          class("h-5 w-5"),
-          attr.type_("checkbox"),
-          attr.checked(is_checked),
-          event.on_check(UserToggledHabit(habit, _)),
-        ]),
-      ]),
-      html.td([td_classes, class("t-habit-label pl-4 py-2")], [
-        div([class("text-lg max-w-72 truncate")], [text(habit.label)]),
-      ]),
-      html.td(
-        [td_classes, class("text-right"), style([#("max-width", "3rem")])],
-        [btn_move],
-      ),
+  let cell_classes =
+    attr.classes([
+      #("h-14 flex items-center", True),
+      #("bg-slate-100", is_selected),
     ])
 
+  let row1 = [
+    div([class("t-habit-check"), cell_classes], [
+      html.input([
+        class("h-5 w-5"),
+        attr.type_("checkbox"),
+        attr.checked(is_checked),
+        event.on_check(UserToggledHabit(habit, _)),
+      ]),
+    ]),
+    div([class("t-habit-label pl-4"), cell_classes], [
+      div([class("text-lg max-w-72 truncate")], [text(habit.label)]),
+    ]),
+    div([class("text-right"), cell_classes, style([#("max-width", "3rem")])], [
+      btn_move,
+    ]),
+  ]
+
   let row2 = case is_selected {
-    True ->
-      html.tr([class("bg-slate-100")], [
-        html.td([class(""), attr.attribute("colspan", "3")], [
-          div([class("flex items-center justify-end")], [
-            btn_archive,
-            btn_unarchive,
-            btn_delete,
-          ]),
-        ]),
-      ])
-    False -> element.none()
+    True -> [
+      div([class("bg-slate-100 col-span-full flex items-center justify-end")], [
+        btn_archive,
+        btn_unarchive,
+        btn_delete,
+      ]),
+    ]
+
+    False -> []
   }
 
-  [row1, row2]
+  list.concat([row1, row2])
 }
 
 /// Helpers
