@@ -12,6 +12,10 @@ import gleam/option.{type Option, None, Some}
 import gleam/result.{try}
 import gleam/string
 import gleam/uri.{type Uri}
+import lib/remote_data.{
+  type RemoteData, RemoteDataFailure, RemoteDataLoading, RemoteDataNotAsked,
+  RemoteDataSuccess,
+}
 import lib/return
 import lustre
 import lustre/attribute.{class, style} as attr
@@ -68,13 +72,6 @@ fn new_model(flags: Flags, date: Date) -> Model {
 pub type Modal {
   ModalNone
   ModalDeleteHabit(Habit)
-}
-
-pub type RemoteData(data) {
-  RemoteDataNotAsked
-  RemoteDataLoading
-  RemoteDataSuccess(data)
-  RemoteDataFailure(String)
 }
 
 pub type Auth {
@@ -390,9 +387,8 @@ pub fn update_authenticated(
       #(model, effect.none())
       |> return.then(fetch_data_for_displayed_date(_, session))
     }
-    ApiChangedHabitCategory(_habit, _category, _result) -> {
-      #(model, effect.none())
-      |> return.then(fetch_data_for_displayed_date(_, session))
+    ApiChangedHabitCategory(habit, category, result) -> {
+      on_api_changed_habit_category(model, habit, category, result)
     }
     ApiDeletedHabit(_habit, _result) -> {
       #(model, effect.none())
@@ -464,6 +460,42 @@ fn on_api_returned_auth_data(
       effect.none(),
     )
   }
+}
+
+fn on_api_changed_habit_category(
+  model: Model,
+  changed_habit: Habit,
+  category: Category,
+  result: Result(Nil, HttpError),
+) {
+  case result {
+    Ok(_) -> {
+      let next_model =
+        model
+        |> map_habit_in_model(fn(habit: Habit) {
+          case habit.id == changed_habit.id {
+            True -> Habit(..habit, category_id: Some(category.id))
+            False -> habit
+          }
+        })
+      #(next_model, effect.none())
+    }
+    Error(_) -> {
+      // TODO show error
+      #(model, effect.none())
+    }
+  }
+}
+
+fn map_habit_in_model(model: Model, fun: fn(Habit) -> Habit) -> Model {
+  Model(
+    ..model,
+    habits: remote_data.map(model.habits, map_habit_in_collection(_, fun)),
+  )
+}
+
+fn map_habit_in_collection(collection: HabitCollection, fun: fn(Habit) -> Habit) {
+  HabitCollection(..collection, items: list.map(collection.items, fun))
 }
 
 fn login(model: Model) -> effect.Effect(Msg) {
