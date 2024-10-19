@@ -37,12 +37,12 @@ pub type Model {
   Model(
     auth: Auth,
     categories: RemoteData(CategoryCollection),
+    deleting_habit: Option(String),
     displayed_date: Date,
     flags: Flags,
     habits: RemoteData(HabitCollection),
     is_adding: Bool,
     login_form: LoginForm,
-    modal: Modal,
     new_habit_form: NewHabitForm,
     new_category_form: NewCategoryForm,
     notices: List(Notice),
@@ -55,23 +55,18 @@ fn new_model(flags: Flags, date: Date) -> Model {
   Model(
     auth: Unauthenticated,
     categories: RemoteDataNotAsked,
+    deleting_habit: None,
     displayed_date: date,
     flags:,
     habits: RemoteDataNotAsked,
     is_adding: False,
     login_form: new_login_form(),
-    modal: ModalNone,
     new_category_form: new_category_form(),
     new_habit_form: new_habit_form(),
     notices: [],
     selected_habit: None,
     show_expanded_actions: False,
   )
-}
-
-pub type Modal {
-  ModalNone
-  ModalDeleteHabit(Habit)
 }
 
 pub type Auth {
@@ -424,13 +419,16 @@ pub fn update_authenticated(
       #(model, archive_habit(model, session, habit, date))
     }
     UserDeletedHabit(habit) -> {
-      #(Model(..model, modal: ModalDeleteHabit(habit)), effect.none())
+      #(Model(..model, deleting_habit: Some(habit.id)), effect.none())
     }
     UserDeletedHabitCancelled -> {
-      #(Model(..model, modal: ModalNone), effect.none())
+      #(Model(..model, deleting_habit: None), effect.none())
     }
     UserDeletedHabitCommitted(habit) -> {
-      #(Model(..model, modal: ModalNone), delete_habit(model, session, habit))
+      #(
+        Model(..model, deleting_habit: None),
+        delete_habit(model, session, habit),
+      )
     }
     UserToggledExpandedActions(state) -> {
       #(Model(..model, show_expanded_actions: state), effect.none())
@@ -439,7 +437,10 @@ pub fn update_authenticated(
       #(model, unarchive_habit(model, session, habit))
     }
     UserSelectedHabit(habit) -> {
-      #(Model(..model, selected_habit: habit), effect.none())
+      #(
+        Model(..model, deleting_habit: None, selected_habit: habit),
+        effect.none(),
+      )
     }
     UserToggledHabit(habit, state) -> {
       #(model, toggle_check(model, session, habit, state))
@@ -952,32 +953,6 @@ fn view_authenticated(
     view_pagination(model, today),
     view_actions(model, session),
     view_habits(model, today),
-    view_maybe_modal(model),
-  ])
-}
-
-fn view_maybe_modal(model: Model) {
-  case model.modal {
-    ModalNone -> element.none()
-    ModalDeleteHabit(habit) -> view_modal_delete_habit(model, habit)
-  }
-}
-
-fn view_modal_delete_habit(_model: Model, habit: Habit) {
-  components.modal([
-    html.p([class("pb-2")], [
-      text("Completely delete this habit? There is no undo."),
-    ]),
-    html.p([class("pb-2 font-semibold")], [text(habit.label)]),
-    html.div([class("py-2 space-x-3 text-right")], [
-      buttons.new(buttons.ActionClick(UserDeletedHabitCancelled))
-        |> buttons.with_label("Cancel")
-        |> buttons.view,
-      buttons.new(buttons.ActionClick(UserDeletedHabitCommitted(habit)))
-        |> buttons.with_label("Delete")
-        |> buttons.with_variant(buttons.VariantDanger)
-        |> buttons.view,
-    ]),
   ])
 }
 
@@ -1137,7 +1112,13 @@ fn view_habits(model: Model, today: Date) {
         RemoteDataNotAsked | RemoteDataLoading ->
           view_habits_wrapper([text("Loading categories...")])
         RemoteDataSuccess(categories) -> {
-          view_habits_with_data(categories, habits, model.selected_habit, today)
+          view_habits_with_data(
+            model,
+            categories,
+            habits,
+            model.selected_habit,
+            today,
+          )
         }
         RemoteDataFailure(error) -> text(error)
       }
@@ -1151,6 +1132,7 @@ fn view_habits_wrapper(children) {
 }
 
 fn view_habits_with_data(
+  model: Model,
   categories: CategoryCollection,
   habit_collection: HabitCollection,
   selected_habit: Option(Habit),
@@ -1175,6 +1157,7 @@ fn view_habits_with_data(
       ],
       list.flat_map(all_categories, view_category(
         _,
+        model,
         habit_collection.date,
         today,
         selected_habit,
@@ -1186,6 +1169,7 @@ fn view_habits_with_data(
 
 fn view_category(
   categorized: Categorized,
+  model: Model,
   date: Date,
   today: Date,
   selected_habit: Option(Habit),
@@ -1238,7 +1222,7 @@ fn view_category(
     ]
     False -> {
       relevant_habits
-      |> list.flat_map(view_habit(_, date, today, selected_habit_id))
+      |> list.flat_map(view_habit(_, model, date, today, selected_habit_id))
     }
   }
 
@@ -1257,6 +1241,7 @@ fn view_category(
 
 fn view_habit(
   habit: Habit,
+  model: Model,
   date: Date,
   today: Date,
   selected_habit_id: Option(String),
@@ -1322,6 +1307,8 @@ fn view_habit(
       #("bg-slate-100", is_selected),
     ])
 
+  let is_deleting_habit = model.deleting_habit == Some(habit.id)
+
   let row1 = [
     div([class("t-habit-check pl-2"), cell_classes], [
       html.input([
@@ -1339,7 +1326,7 @@ fn view_habit(
     ]),
   ]
 
-  let row2 = case is_selected {
+  let row2 = case is_selected && !is_deleting_habit {
     True -> [
       div([class("bg-slate-100 col-span-full flex items-center justify-end")], [
         btn_archive,
@@ -1351,7 +1338,32 @@ fn view_habit(
     False -> []
   }
 
-  list.concat([row1, row2])
+  let row3 = case is_deleting_habit {
+    True -> [
+      div(
+        [
+          class(
+            "bg-slate-100 col-span-full py-2 px-2 flex items-center justify-between",
+          ),
+        ],
+        [
+          div([], [text("Completely delete this habit? There is no undo.")]),
+          div([class("space-x-2")], [
+            buttons.new(buttons.ActionClick(UserDeletedHabitCancelled))
+              |> buttons.with_label("Cancel")
+              |> buttons.view,
+            buttons.new(buttons.ActionClick(UserDeletedHabitCommitted(habit)))
+              |> buttons.with_label("Delete")
+              |> buttons.with_variant(buttons.VariantDanger)
+              |> buttons.view,
+          ]),
+        ],
+      ),
+    ]
+    False -> []
+  }
+
+  list.concat([row1, row2, row3])
 }
 
 /// Helpers
