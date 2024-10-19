@@ -37,7 +37,7 @@ pub type Model {
   Model(
     auth: Auth,
     categories: RemoteData(CategoryCollection),
-    deleting_habit: Option(String),
+    deleting_habit: Option(HabitId),
     displayed_date: Date,
     flags: Flags,
     habits: RemoteData(HabitCollection),
@@ -119,11 +119,15 @@ pub type HabitCollection {
   HabitCollection(date: Date, items: List(Habit))
 }
 
+pub type HabitId {
+  HabitId(id: String)
+}
+
 pub type Habit {
   Habit(
     category_id: Option(String),
     checks: List(Check),
-    id: String,
+    id: HabitId,
     label: String,
     started_at: Date,
     stopped_at: Option(Date),
@@ -151,7 +155,7 @@ fn habit_decoder() -> dynamic.Decoder(Habit) {
     Habit,
     dynamic.field("category_id", dynamic.optional(dynamic.string)),
     dynamic.field("checks", dynamic.list(check_decoder())),
-    dynamic.field("id", dynamic.string),
+    dynamic.field("id", habit_id_decoder),
     dynamic.field("label", dynamic.string),
     dynamic.field("started_at", date_decoder),
     dynamic.field("stopped_at", dynamic.optional(date_decoder)),
@@ -164,6 +168,11 @@ fn habits_decoder() -> dynamic.Decoder(List(Habit)) {
 
 fn check_decoder() -> dynamic.Decoder(Check) {
   dynamic.decode1(Check, dynamic.field("date", date_decoder))
+}
+
+fn habit_id_decoder(value: dynamic.Dynamic) {
+  dynamic.string(value)
+  |> result.map(HabitId)
 }
 
 fn date_decoder(
@@ -499,6 +508,7 @@ fn on_api_deleted_habit(
         |> map_habits_in_model(fn(habits: List(Habit)) {
           list.filter(habits, fn(h) { h.id != deleted_habit.id })
         })
+        |> fn(m) { Model(..m, selected_habit: None) }
 
       #(next_model, effect.none())
     }
@@ -729,7 +739,7 @@ fn delete_habit(
     method: http.Delete,
     path: "/habits",
     payload: None,
-    query: [#("id", "eq." <> habit.id)],
+    query: [#("id", "eq." <> habit.id.id)],
     session:,
   )
   |> lustre_http.send(expect)
@@ -750,7 +760,7 @@ fn toggle_check(
   let payload =
     json.object([
       //
-      #("habit_id", json.string(habit.id)),
+      #("habit_id", json.string(habit.id.id)),
       #("date", json.string(date_str)),
     ])
 
@@ -771,7 +781,10 @@ fn toggle_check(
         method: http.Delete,
         path: "/checks",
         payload: None,
-        query: [#("habit_id", "eq." <> habit.id), #("date", "eq." <> date_str)],
+        query: [
+          #("habit_id", "eq." <> habit.id.id),
+          #("date", "eq." <> date_str),
+        ],
         session:,
       )
   }
@@ -802,7 +815,7 @@ fn change_habit_category(
       method: http.Patch,
       path: "/habits",
       payload: Some(payload),
-      query: [#("id", "eq." <> habit.id)],
+      query: [#("id", "eq." <> habit.id.id)],
       session:,
     )
 
@@ -828,7 +841,7 @@ fn archive_habit(model: Model, session: SessionData, habit: Habit, date: Date) {
       method: http.Patch,
       path: "/habits",
       payload: Some(payload),
-      query: [#("id", "eq." <> habit.id)],
+      query: [#("id", "eq." <> habit.id.id)],
       session:,
     )
 
@@ -853,7 +866,7 @@ fn unarchive_habit(model: Model, session: SessionData, habit: Habit) {
       method: http.Patch,
       path: "/habits",
       payload: Some(payload),
-      query: [#("id", "eq." <> habit.id)],
+      query: [#("id", "eq." <> habit.id.id)],
       session:,
     )
 
@@ -1282,7 +1295,7 @@ fn view_habit(
   model: Model,
   date: Date,
   today: Date,
-  selected_habit_id: Option(String),
+  selected_habit_id: Option(HabitId),
 ) -> List(Element(AuthenticatedMsg)) {
   let is_checked =
     habit.checks
@@ -1304,7 +1317,7 @@ fn view_habit(
       attr.type_("radio"),
       attr.checked(is_selected),
       attr.name("move"),
-      attr.value(habit.id),
+      attr.value(habit.id.id),
       class("w-5 h-5"),
     ])
 
