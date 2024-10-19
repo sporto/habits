@@ -385,9 +385,8 @@ pub fn update_authenticated(
     ApiChangedHabitCategory(habit, category, result) -> {
       on_api_changed_habit_category(model, habit, category, result)
     }
-    ApiDeletedHabit(_habit, _result) -> {
-      #(model, effect.none())
-      |> return.then(fetch_data_for_displayed_date(_, session))
+    ApiDeletedHabit(habit, result) -> {
+      on_api_deleted_habit(model, habit, result)
     }
     ApiUnarchivedHabit(_habit, _result) -> {
       #(model, effect.none())
@@ -488,11 +487,50 @@ fn on_api_changed_habit_category(
   }
 }
 
+fn on_api_deleted_habit(
+  model: Model,
+  deleted_habit: Habit,
+  result: Result(Nil, HttpError),
+) {
+  case result {
+    Ok(_) -> {
+      let next_model =
+        model
+        |> map_habits_in_model(fn(habits: List(Habit)) {
+          list.filter(habits, fn(h) { h.id != deleted_habit.id })
+        })
+
+      #(next_model, effect.none())
+    }
+    Error(_) -> {
+      // TODO show error
+      #(model, effect.none())
+    }
+  }
+}
+
 fn map_habit_in_model(model: Model, fun: fn(Habit) -> Habit) -> Model {
   Model(
     ..model,
     habits: remote_data.map(model.habits, map_habit_in_collection(_, fun)),
   )
+}
+
+fn map_habits_in_model(
+  model: Model,
+  fun: fn(List(Habit)) -> List(Habit),
+) -> Model {
+  Model(
+    ..model,
+    habits: remote_data.map(model.habits, map_habits_in_collection(_, fun)),
+  )
+}
+
+fn map_habits_in_collection(
+  collection: HabitCollection,
+  fun: fn(List(Habit)) -> List(Habit),
+) {
+  HabitCollection(..collection, items: fun(collection.items))
 }
 
 fn map_habit_in_collection(collection: HabitCollection, fun: fn(Habit) -> Habit) {
