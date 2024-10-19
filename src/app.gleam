@@ -221,6 +221,7 @@ pub type AuthenticatedMsg {
   ApiCreatedCategory(Result(Nil, HttpError))
   ApiArchivedHabit(Habit, Date, Result(Nil, HttpError))
   ApiDeletedHabit(Habit, Result(Nil, HttpError))
+  ApiChangedHabitCategory(Habit, Category, Result(Nil, HttpError))
   ApiReturnedHabits(Date, Result(List(Habit), HttpError))
   ApiReturnedCategories(Result(List(Category), HttpError))
   ApiToggledHabit(Habit, Date, Bool, Result(Nil, HttpError))
@@ -229,7 +230,7 @@ pub type AuthenticatedMsg {
   NewHabitLabelChanged(String)
   NewCategoryFormSubmitted
   NewCategoryLabelChanged(String)
-  SelectedCategoryToMoveHabitTo(Category, Habit)
+  UserMovedHabitToCategory(Category, Habit)
   UserArchivedHabit(Habit, Date)
   UserDeletedHabit(Habit)
   UserDeletedHabitCancelled
@@ -389,6 +390,10 @@ pub fn update_authenticated(
       #(model, effect.none())
       |> return.then(fetch_data_for_displayed_date(_, session))
     }
+    ApiChangedHabitCategory(_habit, _category, _result) -> {
+      #(model, effect.none())
+      |> return.then(fetch_data_for_displayed_date(_, session))
+    }
     ApiDeletedHabit(_habit, _result) -> {
       #(model, effect.none())
       |> return.then(fetch_data_for_displayed_date(_, session))
@@ -416,9 +421,8 @@ pub fn update_authenticated(
     NewCategoryFormSubmitted -> {
       #(model, create_category(model, session))
     }
-    SelectedCategoryToMoveHabitTo(category, habit) -> {
-      // TODO
-      #(model, effect.none())
+    UserMovedHabitToCategory(category, habit) -> {
+      #(model, change_habit_category(model, session, habit, category))
     }
     UserArchivedHabit(habit, date) -> {
       #(model, archive_habit(model, session, habit, date))
@@ -700,6 +704,36 @@ fn toggle_check(
         session:,
       )
   }
+
+  request
+  |> lustre_http.send(expect)
+  |> effect.map(AuthenticatedMsg(session, _))
+}
+
+fn change_habit_category(
+  model: Model,
+  session: SessionData,
+  habit: Habit,
+  category: Category,
+) {
+  let message = ApiChangedHabitCategory(habit, category, _)
+  let expect = lustre_http.expect_anything(message)
+
+  let payload =
+    json.object([
+      //
+      #("category_id", json.string(category.id)),
+    ])
+
+  let request =
+    api_crud_request(
+      flags: model.flags,
+      method: http.Patch,
+      path: "/habits",
+      payload: Some(payload),
+      query: [#("id", "eq." <> habit.id)],
+      session:,
+    )
 
   request
   |> lustre_http.send(expect)
@@ -1118,10 +1152,6 @@ fn view_habits_with_data(
   ])
 }
 
-fn col1_classes() {
-  class("max-w-5")
-}
-
 fn view_category(
   categorized: Categorized,
   date: Date,
@@ -1151,13 +1181,11 @@ fn view_category(
           case habit.category_id == Some(category.id) {
             True -> element.none()
             False -> {
-              div([class("t-move-here col-span-full")], [
+              div([class("t-move-here")], [
                 buttons.new(
-                  buttons.ActionClick(SelectedCategoryToMoveHabitTo(
-                    category,
-                    habit,
-                  )),
+                  buttons.ActionClick(UserMovedHabitToCategory(category, habit)),
                 )
+                |> buttons.with_attrs([class("h-8")])
                 |> buttons.with_label("Move here")
                 |> buttons.with_variant(buttons.VariantOutlined)
                 |> buttons.view,
@@ -1174,7 +1202,7 @@ fn view_category(
 
   let habit_rows = case relevant_habits == [] {
     True -> [
-      div([class("text-slate-300 text-lg col-span-full")], [text("Empty")]),
+      div([class("text-slate-300 text-lg col-span-full py-2")], [text("Empty")]),
     ]
     False -> {
       relevant_habits
@@ -1183,10 +1211,14 @@ fn view_category(
   }
 
   [
-    div([class("text-left text-slate-600 py-2 col-span-full")], [
-      text(category_label),
-    ]),
-    move_here,
+    div(
+      [
+        class("text-left text-slate-600 py-2 col-span-full h-10"),
+        class("border-b border-slate-200"),
+        class("flex items-center justify-between"),
+      ],
+      [div([], [text(category_label)]), move_here],
+    ),
     ..habit_rows
   ]
 }
@@ -1259,7 +1291,7 @@ fn view_habit(
     ])
 
   let row1 = [
-    div([class("t-habit-check"), cell_classes], [
+    div([class("t-habit-check pl-2"), cell_classes], [
       html.input([
         class("h-5 w-5"),
         attr.type_("checkbox"),
