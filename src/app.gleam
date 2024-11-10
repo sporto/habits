@@ -37,6 +37,7 @@ pub type Model {
   Model(
     auth: Auth,
     categories: RemoteData(CategoryCollection),
+    deleting_category: Option(CategoryId),
     deleting_habit: Option(HabitId),
     displayed_date: Date,
     flags: Flags,
@@ -55,6 +56,7 @@ fn new_model(flags: Flags, date: Date) -> Model {
   Model(
     auth: Unauthenticated,
     categories: RemoteDataNotAsked,
+    deleting_category: None,
     deleting_habit: None,
     displayed_date: date,
     flags:,
@@ -106,8 +108,12 @@ pub type CategoryCollection {
   CategoryCollection(items: List(Category))
 }
 
+pub type CategoryId {
+  CategoryId(id: String)
+}
+
 pub type Category {
-  Category(id: String, label: String)
+  Category(id: CategoryId, label: String)
 }
 
 pub type Categorized {
@@ -125,7 +131,7 @@ pub type HabitId {
 
 pub type Habit {
   Habit(
-    category_id: Option(String),
+    category_id: Option(CategoryId),
     checks: List(Check),
     id: HabitId,
     label: String,
@@ -141,9 +147,14 @@ pub type Check {
 fn category_decoder() -> dynamic.Decoder(Category) {
   dynamic.decode2(
     Category,
-    dynamic.field("id", dynamic.string),
+    dynamic.field("id", category_id_decoder),
     dynamic.field("label", dynamic.string),
   )
+}
+
+fn category_id_decoder(value: dynamic.Dynamic) {
+  dynamic.string(value)
+  |> result.map(CategoryId)
 }
 
 fn categories_decoder() -> dynamic.Decoder(List(Category)) {
@@ -153,7 +164,7 @@ fn categories_decoder() -> dynamic.Decoder(List(Category)) {
 fn habit_decoder() -> dynamic.Decoder(Habit) {
   dynamic.decode6(
     Habit,
-    dynamic.field("category_id", dynamic.optional(dynamic.string)),
+    dynamic.field("category_id", dynamic.optional(category_id_decoder)),
     dynamic.field("checks", dynamic.list(check_decoder())),
     dynamic.field("id", habit_id_decoder),
     dynamic.field("label", dynamic.string),
@@ -222,6 +233,7 @@ pub type AuthenticatedMsg {
   ApiCreatedCategory(Result(Nil, HttpError))
   ApiArchivedHabit(Habit, Date, Result(Nil, HttpError))
   ApiDeletedHabit(Habit, Result(Nil, HttpError))
+  ApiDeletedCategory(Category, Result(Nil, HttpError))
   ApiChangedHabitCategory(Habit, Category, Result(Nil, HttpError))
   ApiReturnedHabits(Date, Result(List(Habit), HttpError))
   ApiReturnedCategories(Result(List(Category), HttpError))
@@ -231,11 +243,14 @@ pub type AuthenticatedMsg {
   NewHabitLabelChanged(String)
   NewCategoryFormSubmitted
   NewCategoryLabelChanged(String)
-  UserMovedHabitToCategory(Category, Habit)
   UserArchivedHabit(Habit, Date)
+  UserDeletedCategory(Category)
+  UserDeletedCategoryCancelled
+  UserDeletedCategoryCommitted(Category)
   UserDeletedHabit(Habit)
   UserDeletedHabitCancelled
   UserDeletedHabitCommitted(Habit)
+  UserMovedHabitToCategory(Category, Habit)
   UserSelectedHabit(Option(Habit))
   UserToggledExpandedActions(Bool)
   UserToggledHabit(Habit, Bool)
@@ -394,6 +409,10 @@ pub fn update_authenticated(
     ApiChangedHabitCategory(habit, category, result) -> {
       on_api_changed_habit_category(model, habit, category, result)
     }
+    ApiDeletedCategory(_category, _result) -> {
+      #(model, effect.none())
+      |> return.then(fetch_data_for_displayed_date(_, session))
+    }
     ApiDeletedHabit(habit, result) -> {
       on_api_deleted_habit(model, habit, result)
     }
@@ -425,6 +444,18 @@ pub fn update_authenticated(
     }
     UserArchivedHabit(habit, date) -> {
       #(model, archive_habit(model, session, habit, date))
+    }
+    UserDeletedCategory(category) -> {
+      #(Model(..model, deleting_category: Some(category.id)), effect.none())
+    }
+    UserDeletedCategoryCancelled -> {
+      #(Model(..model, deleting_category: None), effect.none())
+    }
+    UserDeletedCategoryCommitted(category) -> {
+      #(
+        Model(..model, deleting_category: None),
+        delete_category(model, session, category),
+      )
     }
     UserDeletedHabit(habit) -> {
       #(Model(..model, deleting_habit: Some(habit.id)), effect.none())
@@ -461,13 +492,16 @@ fn on_api_returned_auth_data(
   result: Result(SessionData, HttpError),
 ) -> Returns {
   case result {
-    Ok(session) ->
+    Ok(session) -> {
       #(Model(..model, auth: Authenticated(session)), store_session(session))
       |> return.then(fetch_data_for_displayed_date(_, session))
-    Error(error) -> #(
-      Model(..model, notices: [Notice(http_error_to_string(error))]),
-      effect.none(),
-    )
+    }
+    Error(error) -> {
+      #(
+        Model(..model, notices: [Notice(http_error_to_string(error))]),
+        effect.none(),
+      )
+    }
   }
 }
 
@@ -727,6 +761,25 @@ fn create_habit(model: Model, session: SessionData) -> effect.Effect(Msg) {
   |> effect.map(AuthenticatedMsg(session, _))
 }
 
+fn delete_category(
+  model: Model,
+  session: SessionData,
+  category: Category,
+) -> effect.Effect(Msg) {
+  let expect = lustre_http.expect_anything(ApiDeletedCategory(category, _))
+
+  api_crud_request(
+    flags: model.flags,
+    method: http.Delete,
+    path: "/categories",
+    payload: None,
+    query: [#("id", "eq." <> category.id.id)],
+    session:,
+  )
+  |> lustre_http.send(expect)
+  |> effect.map(AuthenticatedMsg(session, _))
+}
+
 fn delete_habit(
   model: Model,
   session: SessionData,
@@ -806,7 +859,7 @@ fn change_habit_category(
   let payload =
     json.object([
       //
-      #("category_id", json.string(category.id)),
+      #("category_id", json.string(category.id.id)),
     ])
 
   let request =
@@ -1240,30 +1293,8 @@ fn view_category(
     sorted_habits
     |> list.filter(fn(habit) { habit.category_id == category_id })
 
-  let move_here = case selected_habit {
-    Some(habit) -> {
-      case category {
-        None -> element.none()
-        Some(category) -> {
-          case habit.category_id == Some(category.id) {
-            True -> element.none()
-            False -> {
-              div([class("t-move-here")], [
-                buttons.new(
-                  buttons.ActionClick(UserMovedHabitToCategory(category, habit)),
-                )
-                |> buttons.with_attrs([class("h-8")])
-                |> buttons.with_label("Move here")
-                |> buttons.with_variant(buttons.VariantOutlined)
-                |> buttons.view,
-              ])
-            }
-          }
-        }
-      }
-    }
-    None -> element.none()
-  }
+  let category_actions =
+    view_category_actions(model.deleting_category, category, selected_habit)
 
   let selected_habit_id = option.map(selected_habit, fn(h) { h.id })
 
@@ -1284,10 +1315,66 @@ fn view_category(
         class("border-b border-slate-200"),
         class("flex items-center justify-between"),
       ],
-      [div([], [text(category_label)]), move_here],
+      [div([], [text(category_label)]), category_actions],
     ),
     ..habit_rows
   ]
+}
+
+fn view_category_actions(
+  deleting_category: Option(CategoryId),
+  maybe_category: Option(Category),
+  selected_habit: Option(Habit),
+) {
+  use category <- none_to_empty_element(maybe_category)
+
+  case selected_habit {
+    Some(habit) -> {
+      case habit.category_id == Some(category.id) {
+        True -> element.none()
+        False -> {
+          div([class("t-move-here")], [
+            buttons.new(
+              buttons.ActionClick(UserMovedHabitToCategory(category, habit)),
+            )
+            |> buttons.with_attrs([class("h-8")])
+            |> buttons.with_label("Move here")
+            |> buttons.with_variant(buttons.VariantOutlined)
+            |> buttons.view,
+          ])
+        }
+      }
+    }
+    None -> {
+      case deleting_category == Some(category.id) {
+        True -> view_delete_category_confirmation(category)
+        False -> view_delete_category(category)
+      }
+    }
+  }
+}
+
+fn view_delete_category(category: Category) {
+  let message = UserDeletedCategory(category)
+
+  buttons.new(buttons.ActionClick(message))
+  |> buttons.with_icon_left(icons.Trash)
+  |> buttons.with_variant(buttons.VariantUnfilled)
+  |> buttons.with_attrs([class("t-btn-delete")])
+  |> buttons.with_attrs([attr.title("Delete category")])
+  |> buttons.view
+}
+
+fn view_delete_category_confirmation(category: Category) {
+  div([class("space-x-2")], [
+    buttons.new(buttons.ActionClick(UserDeletedCategoryCancelled))
+      |> buttons.with_label("Cancel")
+      |> buttons.view,
+    buttons.new(buttons.ActionClick(UserDeletedCategoryCommitted(category)))
+      |> buttons.with_label("Delete")
+      |> buttons.with_variant(buttons.VariantDanger)
+      |> buttons.view,
+  ])
 }
 
 fn view_habit(
@@ -1491,4 +1578,11 @@ fn api_crud_request(
 
 fn date_to_string(date: Date) -> String {
   date.to_iso_string(date)
+}
+
+fn none_to_empty_element(maybe: Option(a), next) {
+  case maybe {
+    Some(value) -> next(value)
+    None -> element.none()
+  }
 }
