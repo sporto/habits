@@ -1003,9 +1003,7 @@ pub fn session_user_encode(user: User) {
 
 /// Views
 pub fn view(model: Model) -> element.Element(Msg) {
-  let today =
-    instant.now()
-    |> instant.as_local_date
+  let today = today()
 
   case model.auth {
     Unauthenticated ->
@@ -1026,7 +1024,7 @@ pub fn view(model: Model) -> element.Element(Msg) {
 }
 
 fn check_session_is_valid(session: SessionData) -> Bool {
-  let now = instant.now() |> instant.as_utc_datetime |> datetime.to_unix_milli
+  let now = instant.now() |> instant.as_utc_datetime |> datetime.to_unix_seconds
 
   now < session.expires_at
 }

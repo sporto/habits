@@ -1,5 +1,4 @@
 import app
-import gleam/io
 import gleam/json
 import gleeunit
 import gleeunit/should
