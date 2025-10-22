@@ -442,8 +442,32 @@ pub fn update_authenticated(
       #(model, effect.none())
       |> return.then(fetch_data_for_displayed_date(_, session))
     }
-    ApiToggledHabit(_habit, _date, _state, _result) -> {
-      #(model, effect.none())
+    ApiToggledHabit(habit, date, state, _result) -> {
+      let next_model =
+        Model(
+          ..model,
+          habits: remote_data.map(model.habits, fn(habits) {
+            let items =
+              list.map(habits.items, fn(other_habit) {
+                case habit.id == other_habit.id {
+                  True -> {
+                    let checks = case state {
+                      True -> list.append(other_habit.checks, [Check(date)])
+                      False ->
+                        list.filter(other_habit.checks, fn(check) {
+                          check.date != date
+                        })
+                    }
+                    Habit(..other_habit, checks:)
+                  }
+                  False -> other_habit
+                }
+              })
+            HabitCollection(..habits, items:)
+          }),
+        )
+
+      #(next_model, effect.none())
     }
     NewHabitLabelChanged(label) -> #(
       Model(..model, new_habit_form: NewHabitForm(label: label)),
