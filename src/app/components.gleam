@@ -1,5 +1,5 @@
 import lustre/attribute.{class} as attr
-import lustre/element/html.{div, span, text}
+import lustre/element/html
 
 pub fn input(attrs) {
   html.input([class("h-12 p-2 rounded border"), ..attrs])

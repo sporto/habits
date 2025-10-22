@@ -1,9 +1,10 @@
 import { defineConfig } from "vite";
 import gleam from "vite-gleam";
+import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
 	root: ".",
-	plugins: [gleam()],
+	plugins: [gleam(),tailwindcss()],
 	build: {
 		assetsDir: "",
 		emptyOutDir: true,
