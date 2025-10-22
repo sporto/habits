@@ -16,8 +16,8 @@ pub fn modal(children) {
       html.dialog(
         [
           class("t-modal bg-white rounded p-4"),
-          attr.style([#("margin-top", "12rem")]),
-          attr.open(True),
+          attr.style("margin-top", "12rem"),
+          attr.attribute("open", ""),
         ],
         children,
       ),

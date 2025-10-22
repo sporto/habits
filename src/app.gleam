@@ -1,11 +1,10 @@
 import app/buttons
 import app/components
 import app/icons
-import birl
 import gleam/dynamic
+import gleam/dynamic/decode
 import gleam/http.{type Method, Get, Https, Post}
 import gleam/http/request.{type Request}
-import gleam/io
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -27,7 +26,10 @@ import lustre_http.{type HttpError}
 import modem
 import plinth/javascript/storage
 import qs
-import rada/date.{type Date}
+import tempo.{type Date}
+import tempo/date
+import tempo/datetime
+import tempo/instant
 
 pub type Flags {
   Flags(api_host: String, api_public_key: String)
@@ -144,56 +146,76 @@ pub type Check {
   Check(date: Date)
 }
 
-fn category_decoder() -> dynamic.Decoder(Category) {
-  dynamic.decode2(
-    Category,
-    dynamic.field("id", category_id_decoder),
-    dynamic.field("label", dynamic.string),
+fn category_decoder() -> decode.Decoder(Category) {
+  use id <- decode.field("id", category_id_decoder())
+  use label <- decode.field("label", decode.string)
+  decode.success(Category(id:, label:))
+}
+
+fn category_id_decoder() {
+  decode.string
+  |> decode.map(CategoryId)
+}
+
+fn categories_decoder() {
+  decode.list(category_decoder())
+}
+
+fn habit_decoder() -> decode.Decoder(Habit) {
+  use category_id <- decode.field(
+    "category_id",
+    decode.optional(category_id_decoder()),
   )
+
+  use checks <- decode.field("checks", decode.list(check_decoder()))
+
+  use id <- decode.field("id", habit_id_decoder())
+
+  use label <- decode.field("label", decode.string)
+
+  use started_at <- decode.field("started_at", date_decoder())
+
+  use stopped_at <- decode.field("stopped_at", decode.optional(date_decoder()))
+
+  decode.success(Habit(
+    category_id:,
+    checks:,
+    id:,
+    label:,
+    started_at:,
+    stopped_at:,
+  ))
 }
 
-fn category_id_decoder(value: dynamic.Dynamic) {
-  dynamic.string(value)
-  |> result.map(CategoryId)
+fn habits_decoder() {
+  decode.list(habit_decoder())
 }
 
-fn categories_decoder() -> dynamic.Decoder(List(Category)) {
-  dynamic.list(category_decoder())
+fn check_decoder() -> decode.Decoder(Check) {
+  use date <- decode.field("date", date_decoder())
+  decode.success(Check(date))
 }
 
-fn habit_decoder() -> dynamic.Decoder(Habit) {
-  dynamic.decode6(
-    Habit,
-    dynamic.field("category_id", dynamic.optional(category_id_decoder)),
-    dynamic.field("checks", dynamic.list(check_decoder())),
-    dynamic.field("id", habit_id_decoder),
-    dynamic.field("label", dynamic.string),
-    dynamic.field("started_at", date_decoder),
-    dynamic.field("stopped_at", dynamic.optional(date_decoder)),
-  )
+fn habit_id_decoder() {
+  decode.string
+  |> decode.map(HabitId)
 }
 
-fn habits_decoder() -> dynamic.Decoder(List(Habit)) {
-  dynamic.list(habit_decoder())
-}
-
-fn check_decoder() -> dynamic.Decoder(Check) {
-  dynamic.decode1(Check, dynamic.field("date", date_decoder))
-}
-
-fn habit_id_decoder(value: dynamic.Dynamic) {
-  dynamic.string(value)
-  |> result.map(HabitId)
-}
-
-fn date_decoder(
-  value: dynamic.Dynamic,
-) -> Result(Date, List(dynamic.DecodeError)) {
-  dynamic.string(value)
-  |> result.then(fn(s) {
-    date.from_iso_string(s)
-    |> result.map_error(fn(e) { [dynamic.DecodeError(e, s, [])] })
+fn date_decoder() -> decode.Decoder(Date) {
+  decode.dynamic
+  |> decode.then(fn(dyn) {
+    case date.from_dynamic_string(dyn) {
+      Ok(date) -> decode.success(date)
+      Error(_) -> {
+        let zero = date.current_local()
+        decode.failure(zero, "Date")
+      }
+    }
   })
+}
+
+fn today() {
+  date.current_local()
 }
 
 fn init(flags: Flags) -> #(Model, effect.Effect(Msg)) {
@@ -201,10 +223,10 @@ fn init(flags: Flags) -> #(Model, effect.Effect(Msg)) {
     Ok(uri) -> {
       case get_date_from_uri(uri) {
         Ok(date) -> date
-        Error(_) -> date.today()
+        Error(_) -> today()
       }
     }
-    Error(_) -> date.today()
+    Error(_) -> today()
   }
   let effects = effect.batch([modem.init(on_url_change), get_session()])
   #(new_model(flags, displayed_date), effects)
@@ -222,7 +244,7 @@ pub type Msg {
 
 pub type UnauthenticatedMsg {
   ApiReturnedSessionData(Result(SessionData, HttpError))
-  ClickedLogin
+  ClickedLogin(List(#(String, String)))
   ChangedEmail(String)
   ChangedPassword(String)
   GotSessionDataFromLS(SessionData)
@@ -239,9 +261,9 @@ pub type AuthenticatedMsg {
   ApiReturnedCategories(Result(List(Category), HttpError))
   ApiToggledHabit(Habit, Date, Bool, Result(Nil, HttpError))
   ApiUnarchivedHabit(Habit, Result(Nil, HttpError))
-  NewHabitFormSubmitted
+  NewHabitFormSubmitted(List(#(String, String)))
   NewHabitLabelChanged(String)
-  NewCategoryFormSubmitted
+  NewCategoryFormSubmitted(List(#(String, String)))
   NewCategoryLabelChanged(String)
   UserArchivedHabit(Habit, Date)
   UserDeletedCategory(Category)
@@ -262,7 +284,7 @@ type Returns =
 
 pub fn main(flags: dynamic.Dynamic) {
   let app = lustre.application(init, update, view)
-  let assert Ok(flags) = flags_decoder()(flags)
+  let assert Ok(flags) = decode.run(flags, flags_decoder())
   let assert Ok(_) = lustre.start(app, "#app", flags)
 
   Nil
@@ -309,7 +331,8 @@ fn get_date_from_uri(uri: Uri) -> Result(Date, String) {
     |> result.replace_error("First date not found"),
   )
 
-  date.from_iso_string(date_str)
+  date.from_string(date_str)
+  |> result.map_error(date.describe_parse_error)
 }
 
 pub fn update_unauthenticated(model: Model, msg: UnauthenticatedMsg) -> Returns {
@@ -327,8 +350,7 @@ pub fn update_unauthenticated(model: Model, msg: UnauthenticatedMsg) -> Returns 
       ),
       effect.none(),
     )
-    ClickedLogin -> {
-      io.debug("Clicked login")
+    ClickedLogin(_) -> {
       #(model, login(model))
     }
     GotSessionDataFromLS(session) -> {
@@ -359,7 +381,7 @@ pub fn update_authenticated(
           )
         }
         Error(error) -> {
-          io.debug(error)
+          echo error
           #(
             Model(
               ..model,
@@ -380,7 +402,7 @@ pub fn update_authenticated(
           )
         }
         Error(error) -> {
-          io.debug(error)
+          echo error
           #(
             Model(
               ..model,
@@ -427,7 +449,7 @@ pub fn update_authenticated(
       Model(..model, new_habit_form: NewHabitForm(label: label)),
       effect.none(),
     )
-    NewHabitFormSubmitted -> {
+    NewHabitFormSubmitted(_) -> {
       #(Model(..model, is_adding: True), create_habit(model, session))
     }
     NewCategoryLabelChanged(label) -> {
@@ -436,7 +458,7 @@ pub fn update_authenticated(
         effect.none(),
       )
     }
-    NewCategoryFormSubmitted -> {
+    NewCategoryFormSubmitted(_) -> {
       #(model, create_category(model, session))
     }
     UserMovedHabitToCategory(category, habit) -> {
@@ -593,7 +615,7 @@ fn login(model: Model) -> effect.Effect(Msg) {
 
   // let url = api_login_url(model.flags)
 
-  io.debug(payload)
+  // io.debug(payload)
 
   build_api_request(
     flags: model.flags,
@@ -612,7 +634,7 @@ fn get_session() -> effect.Effect(Msg) {
       effect.from(fn(dispatch) { dispatch(GotSessionDataFromLS(session_data)) })
       |> effect.map(UnauthenticatedMsg)
     Error(err) -> {
-      io.debug(err)
+      echo err
       effect.none()
     }
   }
@@ -630,7 +652,7 @@ fn get_session_do() -> Result(SessionData, String) {
   )
 
   use data <- try(
-    json.decode(json_string, session_data_decoder())
+    json.parse(json_string, session_data_decoder())
     |> result.map_error(json_error_to_string),
   )
 
@@ -643,7 +665,7 @@ fn store_session(data: SessionData) -> effect.Effect(Msg) {
       effect.none()
     }
     Error(_) -> {
-      io.debug("Failed to open local storage")
+      echo "Failed to open local storage"
       effect.none()
     }
   }
@@ -930,11 +952,10 @@ fn unarchive_habit(model: Model, session: SessionData, habit: Habit) {
 
 /// Decoders
 pub fn flags_decoder() {
-  dynamic.decode2(
-    Flags,
-    dynamic.field("apiHost", dynamic.string),
-    dynamic.field("apiPublicKey", dynamic.string),
-  )
+  use api_host <- decode.field("apiHost", decode.string)
+  use api_public_key <- decode.field("apiPublicKey", decode.string)
+
+  decode.success(Flags(api_host:, api_public_key:))
 }
 
 pub type SessionData {
@@ -951,13 +972,11 @@ pub type User {
 }
 
 pub fn session_data_decoder() {
-  dynamic.decode4(
-    SessionData,
-    dynamic.field("access_token", dynamic.string),
-    dynamic.field("refresh_token", dynamic.string),
-    dynamic.field("expires_at", dynamic.int),
-    dynamic.field("user", session_user_decoder()),
-  )
+  use access_token <- decode.field("access_token", decode.string)
+  use refresh_token <- decode.field("refresh_token", decode.string)
+  use expires_at <- decode.field("expires_at", decode.int)
+  use user <- decode.field("user", session_user_decoder())
+  decode.success(SessionData(access_token:, refresh_token:, expires_at:, user:))
 }
 
 pub fn session_encode(data: SessionData) {
@@ -970,11 +989,9 @@ pub fn session_encode(data: SessionData) {
 }
 
 pub fn session_user_decoder() {
-  dynamic.decode2(
-    User,
-    dynamic.field("id", dynamic.string),
-    dynamic.field("email", dynamic.string),
-  )
+  use id <- decode.field("id", decode.string)
+  use email <- decode.field("email", decode.string)
+  decode.success(User(id:, email:))
 }
 
 pub fn session_user_encode(user: User) {
@@ -986,7 +1003,9 @@ pub fn session_user_encode(user: User) {
 
 /// Views
 pub fn view(model: Model) -> element.Element(Msg) {
-  let today = date.today()
+  let today =
+    instant.now()
+    |> instant.as_local_date
 
   case model.auth {
     Unauthenticated ->
@@ -999,7 +1018,6 @@ pub fn view(model: Model) -> element.Element(Msg) {
           |> element.map(AuthenticatedMsg(session, _))
         }
         False -> {
-          io.debug("Session expired")
           view_unauthenticated(model) |> element.map(UnauthenticatedMsg)
         }
       }
@@ -1008,7 +1026,8 @@ pub fn view(model: Model) -> element.Element(Msg) {
 }
 
 fn check_session_is_valid(session: SessionData) -> Bool {
-  let now = birl.now() |> birl.to_unix
+  let now = instant.now() |> instant.as_utc_datetime |> datetime.to_unix_milli
+
   now < session.expires_at
 }
 
@@ -1157,7 +1176,7 @@ fn view_actions_expanded(model: Model) {
 }
 
 fn date_to_query_string(date: Date) -> String {
-  let str = date.to_iso_string(date)
+  let str = date.to_string(date)
 
   qs.empty()
   |> qs.insert("date", [str])
@@ -1165,9 +1184,9 @@ fn date_to_query_string(date: Date) -> String {
 }
 
 fn view_pagination(model: Model, today: Date) {
-  let yesterday = date.add(model.displayed_date, -1, date.Days)
+  let yesterday = date.add(model.displayed_date, -1)
 
-  let tomorrow = date.add(model.displayed_date, 1, date.Days)
+  let tomorrow = date.add(model.displayed_date, 1)
 
   let today = date_to_query_string(today)
 
@@ -1257,7 +1276,7 @@ fn view_habits_with_data(
     div(
       [
         class("t-habit-list w-full grid"),
-        style([#("grid-template-columns", "2rem 1fr 2rem")]),
+        style("grid-template-columns", "2rem 1fr 2rem"),
       ],
       list.flat_map(all_categories, view_category(
         _,
@@ -1459,7 +1478,7 @@ fn view_habit(
     div([class("t-habit-label pl-4"), cell_classes], [
       div([class("text-lg max-w-72 truncate")], [text(habit.label)]),
     ]),
-    div([class("text-right"), cell_classes, style([#("max-width", "3rem")])], [
+    div([class("text-right"), cell_classes, style("max-width", "3rem")], [
       btn_move,
     ]),
   ]
@@ -1501,7 +1520,7 @@ fn view_habit(
     False -> []
   }
 
-  list.concat([row1, row2, row3])
+  list.flatten([row1, row2, row3])
 }
 
 /// Helpers
@@ -1520,9 +1539,9 @@ fn http_error_to_string(error: HttpError) -> String {
 fn json_error_to_string(error: json.DecodeError) -> String {
   case error {
     json.UnexpectedEndOfInput -> "UnexpectedEndOfInput"
-    json.UnexpectedByte(_, _) -> "UnexpectedByte"
-    json.UnexpectedSequence(_, _) -> "UnexpectedSequence"
-    json.UnexpectedFormat(_) -> "UnexpectedFormat"
+    json.UnexpectedByte(_) -> "UnexpectedByte"
+    json.UnexpectedSequence(_) -> "UnexpectedSequence"
+    json.UnableToDecode(_) -> "UnableToDecode"
   }
 }
 
@@ -1577,7 +1596,7 @@ fn api_crud_request(
 }
 
 fn date_to_string(date: Date) -> String {
-  date.to_iso_string(date)
+  date.to_string(date)
 }
 
 fn none_to_empty_element(maybe: Option(a), next) {

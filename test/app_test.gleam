@@ -23,7 +23,7 @@ pub fn hello_world_test() {
 
 pub fn parse_auth_data_test() {
   let json_string = get_json_fixture("login-response.json")
-  let data = json.decode(from: json_string, using: app.session_data_decoder())
+  let data = json.parse(from: json_string, using: app.session_data_decoder())
 
   data |> should.be_ok()
 }

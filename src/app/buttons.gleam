@@ -187,7 +187,7 @@ pub fn view(config: Config(a)) {
     None -> []
   }
 
-  let content = list.concat([icon_left, label, icon_right])
+  let content = list.flatten([icon_left, label, icon_right])
 
   case config.action {
     ActionNone | ActionClick(_) | ActionSubmit -> {
