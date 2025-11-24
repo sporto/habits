@@ -4,6 +4,6 @@
     "@tailwindcss/vite": "^4.1.15",
     "tailwindcss": "^4.1",
     "vite": "^7.1",
-    "vite-gleam": "^0.4.3"
+    "vite-gleam": "^1.7.1"
   }
 }
